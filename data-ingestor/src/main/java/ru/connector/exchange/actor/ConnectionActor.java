@@ -4,6 +4,8 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.web.reactive.socket.WebSocketHandler;
 import org.springframework.web.reactive.socket.WebSocketMessage;
 import org.springframework.web.reactive.socket.WebSocketSession;
@@ -53,16 +55,23 @@ public final class ConnectionActor {
     private final Duration rateLimitDelay;
     private final Duration reconnectDelay;
 
+    private final Sinks.One<Void> connected = Sinks.one();
+
+    private final Map<StreamKey, String> activeSubscriptions = new ConcurrentHashMap<>();
+    private final Sinks.Many<String> outboundSink = Sinks.many().multicast().onBackpressureBuffer(DEFAULT_BUFFER_SIZE, false);
+
+
     private final Sinks.Many<ConnectionCommand> mailbox = Sinks.many().unicast().onBackpressureBuffer();
     private final Scheduler scheduler;
-    private final Sinks.Many<String> outboundSink = Sinks.many().multicast().onBackpressureBuffer(DEFAULT_BUFFER_SIZE, false);
-    private final Map<StreamKey, String> activeSubscriptions = new ConcurrentHashMap<>();
-    private final Sinks.One<Void> connected = Sinks.one();
+
+
+    // Атомарные флаги жизненного цикла актора.
+    // Замена volatile boolean closed на AtomicBoolean устраняет гонки состояния (race condition)
+    // между параллельными вызовами subscribe/unsubscribe/close (устранение антипаттерна Check-Then-Act).
+    private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private final AtomicBoolean isConnected = new AtomicBoolean(false);
     private final AtomicBoolean isStarted = new AtomicBoolean(false);
 
-    @Getter
-    private volatile boolean closed = false;
     private Disposable connection;
     private Disposable mailboxLoop;
 
@@ -93,7 +102,7 @@ public final class ConnectionActor {
     }
 
     public void start() {
-        if (closed || !isStarted.compareAndSet(false, true)) return;
+        if (isClosed.get() || !isStarted.compareAndSet(false, true)) return;
 
         this.mailboxLoop = mailbox.asFlux()
                 .publishOn(scheduler)
@@ -104,13 +113,8 @@ public final class ConnectionActor {
             connected.tryEmitEmpty();
             log.info("[WS #{}] WebSocket-соединение УСТАНОВЛЕНО (Session ID: {})", id, session.getId());
             Mono<Void> inbound = inboundDataStream(session);
-            Flux<WebSocketMessage> outboundCommands = allOutBoundStream(session);
-
-            Flux<WebSocketMessage> allOutbound = Flux.merge(
-                    outboundCommands,
-                    adapter.createPingStream(session)
-            );
-            return session.send(allOutbound).and(inbound);
+            Flux<WebSocketMessage> outbound = outboundDataStream(session);
+            return session.send(outbound).and(inbound);
         };
 
         this.connection = wsClient.execute(exchangeUrl, handler)
@@ -128,7 +132,7 @@ public final class ConnectionActor {
                 .subscribe();
     }
 
-    private @NonNull Flux<WebSocketMessage> allOutBoundStream(WebSocketSession session) {
+    private @NonNull Flux<WebSocketMessage> outboundDataStream(WebSocketSession session) {
         Flux<String> outboundFlux = outboundSink.asFlux();
         Flux<String> commands;
 
@@ -141,25 +145,36 @@ public final class ConnectionActor {
         }
 
         if (!rateLimitDelay.isZero()) commands = commands.delayElements(rateLimitDelay);
-        return commands.map(session::textMessage);
+
+        return Flux.merge(
+                commands.map(session::textMessage),
+                adapter.createPingStream(session)
+        );
     }
 
     private @NonNull Mono<Void> inboundDataStream(WebSocketSession session) {
         return session.receive()
                 .timeout(readIdleTimeout)
-                .map(WebSocketMessage::getPayload)
-                .doOnNext(buffer -> {
+                .doOnNext(msg -> {
+
+                    if (msg.getType() == WebSocketMessage.Type.PONG) return;
+                    if (msg.getType() == WebSocketMessage.Type.PING) return;
+
+                    DataBuffer buffer = msg.getPayload();
                     try {
-                        if (adapter.isServiceMsg(buffer)) {
-                            adapter.handleServiceMsg(buffer);
-                        } else {
-                            byte[] bytes = new byte[buffer.readableByteCount()];
+                        // 2. Инвертированная проверка: если фрейм содержит полезную рыночную нагрузку (trade/depth),
+                        // он сразу вычитывается и передается в Kafka (dataConsumer). Иначе передается в адаптер
+                        // для обработки сервисных сообщений (ack подписки, welcome, ошибки биржи).
+                        if (adapter.isPayload(buffer)) {
+                            byte[] bytes = new byte[buffer.readableByteCount()]; // TODO
                             buffer.read(bytes);
                             dataConsumer.accept(bytes);
+                        } else {
+                            adapter.handleServiceMsg(buffer);
                         }
                     } catch (Exception e) {
                         log.error("Ошибка обработки входящего фрейма в сокете {}", id, e);
-                    }
+                    } finally {DataBufferUtils.release(buffer);}
                 }).then();
     }
 
@@ -172,7 +187,7 @@ public final class ConnectionActor {
     }
 
     private Mono<Void> handleSubscribe(ConnectionCommand.Subscribe cmd) {
-        if (closed) {
+        if (isClosed.get()) {
             cmd.reply().emitError(new IllegalStateException(MessageFormat.format("Соединение {0} закрыто", id)), Sinks.EmitFailureHandler.FAIL_FAST);
             return Mono.empty();
         }
@@ -190,8 +205,8 @@ public final class ConnectionActor {
     }
 
     private Mono<Void> handleUnsubscribe(ConnectionCommand.Unsubscribe cmd) {
-        return Mono.just(closed)
-                .filter(isClosed -> !isClosed)
+        return Mono.just(isClosed.get())
+                .filter(closed -> !closed)
                 .switchIfEmpty(Mono.error(() -> new IllegalStateException(MessageFormat.format("Соединение {0} закрыто", id))))
                 .flatMap(_ -> Mono.justOrEmpty(activeSubscriptions.remove(cmd.key())))
                 .flatMap(removed -> {
@@ -215,32 +230,50 @@ public final class ConnectionActor {
     }
 
     public Mono<Void> subscribe(StreamKey key, String frame) {
-        if (closed) return Mono.error(new IllegalStateException("Соединение " + id + " закрыто"));
+        if (isClosed.get()) return Mono.error(new IllegalStateException("Соединение " + id + " закрыто"));
         return connected.asMono().then(Mono.defer(() -> {
+            if (isClosed.get()) return Mono.error(new IllegalStateException("Соединение " + id + " закрыто"));
             Sinks.One<Void> reply = Sinks.one();
-            Sinks.EmitResult result = mailbox.tryEmitNext(new ConnectionCommand.Subscribe(key, frame, reply));
+            Sinks.EmitResult result;
+            // Project Reactor Sinks.many().unicast() не является потокобезопасным при параллельных вызовах.
+            // Блок synchronized (mailbox) сериализует доступ к tryEmitNext из пула потоков,
+            // предотвращая ошибку Sinks.EmitResult.FAIL_NON_SERIALIZED при конкурентной подписке.
+            synchronized (mailbox) {
+                result = mailbox.tryEmitNext(new ConnectionCommand.Subscribe(key, frame, reply));
+            }
             if (result.isFailure()) return Mono.error(new IllegalStateException("Очередь актора отклонила подписку: " + result));
             return reply.asMono();
         }));
     }
 
     public Mono<Void> unsubscribe(StreamKey key, String unsubscribeFrame) {
-        if (closed) return Mono.error(new IllegalStateException("Соединение " + id + " закрыто"));
+        if (isClosed.get()) return Mono.error(new IllegalStateException("Соединение " + id + " закрыто"));
         Sinks.One<Void> reply = Sinks.one();
-        Sinks.EmitResult result = mailbox.tryEmitNext(new ConnectionCommand.Unsubscribe(key, unsubscribeFrame, reply));
+        Sinks.EmitResult result;
+        // Сериализация параллельных запросов отписки для защиты от FAIL_NON_SERIALIZED
+        synchronized (mailbox) {
+            result = mailbox.tryEmitNext(new ConnectionCommand.Unsubscribe(key, unsubscribeFrame, reply));
+        }
         if (result.isFailure()) return Mono.error(new IllegalStateException("Очередь актора отклонила отписку: " + result));
         return reply.asMono();
     }
 
     public void close() {
-        if (closed) return;
-        closed = true;
+        // Атомарный CAS-переход гарантирует идемпотентность: ровно один поток выполняет процедуру закрытия
+        if (!isClosed.compareAndSet(false, true)) return;
         log.info("[WS #{}] Соединение закрыто", id);
         connected.tryEmitEmpty();
         if (connection != null && !connection.isDisposed()) connection.dispose();
         if (mailboxLoop != null && !mailboxLoop.isDisposed()) mailboxLoop.dispose();
         outboundSink.tryEmitComplete();
-        mailbox.tryEmitComplete();
+        // Сериализация завершения очереди mailbox
+        synchronized (mailbox) {
+            mailbox.tryEmitComplete();
+        }
         scheduler.dispose();
+    }
+
+    public boolean isClosed() {
+        return isClosed.get();
     }
 }

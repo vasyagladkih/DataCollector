@@ -1,0 +1,7 @@
+{
+  "id": "${id}",
+  "action": "subscribe",
+  "channel": "trade",
+  "tradeType": "spot",
+  "symbol": "${symbol}"
+}

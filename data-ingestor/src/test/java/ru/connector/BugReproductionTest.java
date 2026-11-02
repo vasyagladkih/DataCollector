@@ -75,7 +75,7 @@ class BugReproductionTest {
         String marketDataFrame = "{\"id\":\"1545896669145\",\"type\":\"message\",\"topic\":\"/market/ticker:BTC-USDT\",\"data\":{\"price\":\"64000.0\"}}";
         var buffer = new DefaultDataBufferFactory().wrap(marketDataFrame.getBytes(StandardCharsets.UTF_8));
 
-        boolean isService = adapter.isServiceMsg(buffer);
+        boolean isService = adapter.isPayload(buffer);
 
         assertFalse(isService, "Кадр рыночных данных с top-level полем 'id' не должен классифицироваться как служебный и отбрасываться");
     }

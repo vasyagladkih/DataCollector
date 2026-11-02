@@ -21,10 +21,7 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
-import ru.datacollector.common.model.BookTickerCommand;
 import ru.datacollector.common.model.CreateSubscriptionRequest;
-import ru.datacollector.common.model.OrderBookCommand;
-import ru.datacollector.common.model.TradesCommand;
 import org.mapstruct.factory.Mappers;
 import ru.connector.exceptions.ExchangeConnectionException;
 import ru.connector.exchange.kukoin.KucoinManager;
@@ -54,6 +51,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+@Deprecated
 @ExtendWith(MockitoExtension.class)
 class CommandHandlerTest {
 
@@ -70,7 +68,6 @@ class CommandHandlerTest {
 
     private List<String> sentWsFrames;
     private SubscriptionConsumer subscriptionConsumer;
-
     @BeforeEach
     void setUp() {
         sentWsFrames = new CopyOnWriteArrayList<>();

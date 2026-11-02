@@ -1,0 +1,7 @@
+{
+  "id": "1",
+  "action": "subscribe",
+  "channel": "trade",
+  "tradeType": "spot",
+  "symbol": "BTC-USDT"
+}

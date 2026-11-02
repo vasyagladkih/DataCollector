@@ -5,6 +5,7 @@ import org.springframework.web.reactive.socket.client.WebSocketClient;
 import reactor.core.publisher.Mono;
 import ru.connector.exceptions.SubscriptionNotFoundException;
 import ru.connector.exchange.AbstractWebsocketManager;
+import ru.connector.exchange.ExchangeAdapter;
 import ru.connector.exchange.actor.GroupPoolActor;
 import ru.connector.kafka.KafkaRawDataPublisher;
 import ru.connector.models.Command;
@@ -117,7 +118,7 @@ public class KucoinManager extends AbstractWebsocketManager {
         return pools.computeIfAbsent(groupKey, key -> {
             GroupPoolActor poolActor = new GroupPoolActor(
                     key,
-                    new KucoinAdapter(),
+                    getAdapter(),
                     wsClient,
                     rawPublisher,
                     sub -> translate(sub, Action.SUBSCRIBE),
@@ -133,4 +134,7 @@ public class KucoinManager extends AbstractWebsocketManager {
         pools.values().forEach(GroupPoolActor::close);
         pools.clear();
     }
+
+    @Override
+    public ExchangeAdapter getAdapter() {return new KucoinAdapter();}
 }

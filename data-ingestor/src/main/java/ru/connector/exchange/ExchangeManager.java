@@ -14,4 +14,5 @@ public interface ExchangeManager {
     Mono<Void> unsubscribe(StreamKey key);
     List<SubscriptionDto> getAllActive();
     void shutdown();
+    ExchangeAdapter getAdapter();
 }

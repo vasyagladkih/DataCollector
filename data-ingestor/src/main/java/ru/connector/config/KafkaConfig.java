@@ -42,13 +42,9 @@ public class KafkaConfig {
             @Override
             public Command deserialize(JsonParser p, DeserializationContext ctxt) throws JacksonException {
                 JsonNode node = ctxt.readTree(p);
-                if (node == null || node.isNull()) {
-                    return null;
-                }
+                if (node == null || node.isNull()) return null;
                 JsonNode typeNode = node.get("type");
-                if (typeNode == null || typeNode.isNull()) {
-                    return null;
-                }
+                if (typeNode == null || typeNode.isNull()) return null;
                 String type = typeNode.asString();
                 return switch (type) {
                     case "trades" -> ctxt.readTreeAsValue(node, TradesCommand.class);

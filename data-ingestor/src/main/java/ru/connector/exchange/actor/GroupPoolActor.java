@@ -93,6 +93,32 @@ public final class GroupPoolActor implements AutoCloseable {
                 .subscribe();
     }
 
+    private void registerSubscription(StreamKey key, SubscriptionDto req, ConnectionActor conn) {
+        subscriptions.put(key, req);
+        streamToConnection.put(key, conn);
+        connectionToStreams.get(conn).add(key);
+        readSubscriptions.put(key, req);
+        log.info("[POOL-{}-{}] Подписка {} закреплена за сокетом #{}", groupKey.market(), groupKey.type(), key, conn.getId());
+    }
+
+    private void close(ConnectionActor conn) {closeConn(conn);}
+
+    private @NonNull ConnectionActor getChosenConn() {
+        return pool.stream()
+            .filter(c -> !c.isClosed())
+            .filter(c -> {
+                Set<StreamKey> keys = connectionToStreams.get(c);
+                return keys != null && keys.size() < maxSubscriptionsPerConnection;
+            })
+            .findFirst()
+            .orElseGet(() -> {
+                var conn = createConnection();
+                pool.add(conn);
+                connectionToStreams.put(conn, new HashSet<>());
+                return conn;
+            });
+    }
+
     private Mono<Void> handleCommand(PoolCommand command) {
         return switch (command) {
             case PoolCommand.Subscribe sub -> handleSubscribe(sub);
@@ -119,39 +145,6 @@ public final class GroupPoolActor implements AutoCloseable {
                 .doOnError(cmd.reply()::tryEmitError);
     }
 
-    private void registerSubscription(StreamKey key, SubscriptionDto req, ConnectionActor conn) {
-        subscriptions.put(key, req);
-        streamToConnection.put(key, conn);
-        connectionToStreams.get(conn).add(key);
-        readSubscriptions.put(key, req);
-        log.info("[POOL-{}-{}] Подписка {} закреплена за сокетом #{}", groupKey.market(), groupKey.type(), key, conn.getId());
-    }
-
-    private void handleSubscribeError(ConnectionActor conn, Throwable err) {
-        log.error("Ошибка подписки на сокете {}", conn.getId(), err);
-        Optional.ofNullable(connectionToStreams.get(conn))
-                .filter(Set::isEmpty)
-                .ifPresent(_ -> close(conn));
-    }
-
-    private void close(ConnectionActor conn) {closeConn(conn);}
-
-    private @NonNull ConnectionActor getChosenConn() {
-        return pool.stream()
-            .filter(c -> !c.isClosed())
-            .filter(c -> {
-                Set<StreamKey> keys = connectionToStreams.get(c);
-                return keys != null && keys.size() < maxSubscriptionsPerConnection;
-            })
-            .findFirst()
-            .orElseGet(() -> {
-                var conn = createConnection();
-                pool.add(conn);
-                connectionToStreams.put(conn, new HashSet<>());
-                return conn;
-            });
-    }
-
     private Mono<Void> handleUnsubscribe(PoolCommand.Unsubscribe command) {
         StreamKey streamKey = command.key();
 
@@ -163,6 +156,13 @@ public final class GroupPoolActor implements AutoCloseable {
                 .doFinally(_ -> cleanupSubscription(streamKey, conn))))
                 .doOnSuccess(_ -> command.reply().tryEmitEmpty())
                 .doOnError(command.reply()::tryEmitError);
+    }
+
+    private void handleSubscribeError(ConnectionActor conn, Throwable err) {
+        log.error("Ошибка подписки на сокете {}", conn.getId(), err);
+        Optional.ofNullable(connectionToStreams.get(conn))
+                .filter(Set::isEmpty)
+                .ifPresent(_ -> close(conn));
     }
 
     private void cleanupSubscription(StreamKey streamKey, ConnectionActor conn) {

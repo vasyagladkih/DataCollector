@@ -1,6 +1,6 @@
 package ru.datacollector.common.model;
 
-public enum Type {
+public enum     Type {
     TRADES, BOOK_TICKER, ORDER_BOOK;
 
     public static Type type(Command command) {

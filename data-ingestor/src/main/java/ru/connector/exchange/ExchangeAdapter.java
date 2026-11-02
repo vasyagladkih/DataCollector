@@ -7,7 +7,7 @@ import reactor.core.publisher.Flux;
 
 public interface ExchangeAdapter {
     Flux<WebSocketMessage> createPingStream(WebSocketSession session);
-    boolean isServiceMsg(DataBuffer buffer);
+    boolean isPayload(DataBuffer buffer);
     void handleServiceMsg(DataBuffer buffer);
     boolean isRecoverable(Throwable error);
 

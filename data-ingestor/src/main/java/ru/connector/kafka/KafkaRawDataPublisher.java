@@ -31,9 +31,7 @@ public class KafkaRawDataPublisher {
         String targetTopic = (topic != null && !topic.isBlank()) ? topic : defaultTopic;
 
         kafkaTemplate.send(targetTopic, key, payload).whenComplete((_, ex) -> {
-            if (ex != null) {
-                log.error("[KAFKA-RAW-ERROR] Failed to send message to topic={} key={}", targetTopic, key, ex);
-            }
+            if (ex != null) log.error("[KAFKA-RAW-ERROR] Failed to send message to topic={} key={}", targetTopic, key, ex);
         });
     }
 }
