@@ -40,12 +40,12 @@ public class SubscriptionController {
     @GetMapping
     public ResponseEntity<List<CreateSubscriptionResponse>> getSubscriptions(
             @RequestParam(required = false) String exchange,
-            @RequestParam(required = false) String action,
+            @RequestParam(required = false) String channel,
             @RequestParam(required = false) Status status
     ) {
         List<CreateSubscriptionResponse> subscriptions = subscriptionService.findAll(
                 exchange,
-                action,
+                channel,
                 status
         );
         return ResponseEntity.ok(subscriptions);

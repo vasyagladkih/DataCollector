@@ -13,7 +13,8 @@ public record SubscriptionEntity(
         @Id
         UUID id,
         String exchange,
-        String action,
+        @Column("channel")
+        String channel,
         String symbol,
         Status status,
         @Column("error_message")
@@ -27,7 +28,7 @@ public record SubscriptionEntity(
         return new SubscriptionEntity(
                 this.id,
                 this.exchange,
-                this.action,
+                this.channel,
                 this.symbol,
                 newStatus,
                 this.errorMessage,

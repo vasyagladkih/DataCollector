@@ -8,5 +8,5 @@ public record CreateSubscriptionRequest(
         @NotNull(message = "Значение валюты не должно быть пустым")
         String symbol,
         @NotNull(message = "Значение типа собираемых данных не должно быть пустым")
-        String action
+        String channel
 ) {}

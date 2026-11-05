@@ -9,7 +9,7 @@ import java.util.UUID;
 public record CreateSubscriptionResponse(
         UUID id,
         String exchange,
-        String action,
+        String channel,
         String symbol,
         String status,
         String errorMessage,
