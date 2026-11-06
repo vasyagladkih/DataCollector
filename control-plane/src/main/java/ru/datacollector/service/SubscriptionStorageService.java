@@ -13,6 +13,7 @@ import ru.datacollector.persistance.entity.SubscriptionEntity;
 
 import java.util.List;
 import java.util.UUID;
+import java.util.function.UnaryOperator;
 
 @RequiredArgsConstructor
 @Service
@@ -23,32 +24,10 @@ public class SubscriptionStorageService {
 
     @Transactional
     public SubscriptionEntity getOrCreate(CreateSubscriptionRequest request) {
-        return repository.findByExchangeAndChannelAndSymbol(
-                request.exchange(), request.channel(), request.symbol()
-        ).orElseGet(() -> repository.save(mapper.toEntity(request)));
+        return repository.upsertAndIncrement(request.exchange(), request.channel(), request.symbol());
     }
 
-    @Transactional
-    public SubscriptionEntity markRestarting(UUID id) {
-        SubscriptionEntity entity = getExisting(id);
-        if (entity.status() != Status.FAILED) {
-            throw new IllegalSubscriptionStateException(
-                    "Перезапуск возможен только для подписок в статусе FAILED. Текущий статус: " + entity.status()
-            );
-        }
-        return repository.save(entity.withStatus(Status.CONNECTING));
-    }
-
-    @Transactional
-    public SubscriptionEntity markStopped(UUID id) {
-        SubscriptionEntity entity = getExisting(id);
-        if (entity.status() != Status.STOPPED) {
-            return repository.save(entity.withStatus(Status.STOPPED));
-        }
-        return entity;
-    }
-
-    public SubscriptionEntity getExisting(UUID id) {
+    public SubscriptionEntity findById(UUID id) {
         return repository.findById(id)
                 .orElseThrow(() -> new SubscriptionNotFoundException(id));
     }
@@ -58,10 +37,69 @@ public class SubscriptionStorageService {
     }
 
     public List<SubscriptionEntity> findPendingRecovery() {
-        return repository.findByStatusIn(List.of(
+        return repository.findPendingRecovery(List.of(
                 Status.ACTIVE,
-                Status.CONNECTING,
-                Status.RECONNECTING
+                Status.CONNECTING
         ));
+    }
+
+    private SubscriptionEntity update(UUID id, UnaryOperator<SubscriptionEntity> updater) {
+        return repository.findByIdForUpdate(id)
+                .map(updater)
+                .map(repository::save)
+                .orElseThrow(() -> new SubscriptionNotFoundException(id));
+    }
+
+    @Transactional
+    public SubscriptionEntity markActive(UUID id) {
+        return update(id, entity -> {
+            if (entity.status() != Status.CONNECTING) return entity;
+            return entity.withActive();
+        });
+    }
+
+    @Transactional
+    public SubscriptionEntity markFailed(UUID id, String message) {
+        return update(id, entity -> {
+            if (entity.status() != Status.CONNECTING) return entity;
+            return entity.withFailed(message);
+        });
+    }
+
+    @Transactional
+    public SubscriptionEntity markRestarting(UUID id) {
+        return update(id, entity -> {
+            if (entity.status() != Status.FAILED) {
+                throw new IllegalSubscriptionStateException(
+                        "Перезапуск возможен только для подписок в статусе FAILED. Текущий статус: " + entity.status()
+                );
+            }
+            return entity.withRestarting();
+        });
+    }
+
+    @Transactional
+    public SubscriptionEntity markStopped(UUID id) {
+        return update(id, entity -> {
+            if (entity.status() == Status.TERMINATED && entity.refCount() == 0) return entity;
+            return entity.withTerminated();
+        });
+    }
+
+    @Transactional
+    public SubscriptionEntity decrementRefCount(UUID id) {
+        return update(id, entity -> {
+            if (entity.status() == Status.TERMINATED || entity.refCount() <= 0) {
+                throw new IllegalSubscriptionStateException(
+                        "Нельзя уменьшить счетчик: подписка " + id + " уже завершена"
+                );
+            }
+            return entity.withDecrementedRef();
+        });
+    }
+
+    @Transactional
+    public SubscriptionEntity markStatus(UUID id, Status status) {
+        return update(id, entity -> entity.withStatus(status));
     }
 }

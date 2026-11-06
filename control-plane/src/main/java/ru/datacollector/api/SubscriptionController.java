@@ -37,6 +37,11 @@ public class SubscriptionController {
                 .body(subscriptionService.subscribe(createSubscriptionRequest));
     }
 
+    @DeleteMapping("/{id}")
+    public ResponseEntity<CreateSubscriptionResponse> unsubscribe(@PathVariable UUID id) {
+        return ResponseEntity.ok(subscriptionService.unsubscribe(id));
+    }
+
     @GetMapping
     public ResponseEntity<List<CreateSubscriptionResponse>> getSubscriptions(
             @RequestParam(required = false) String exchange,
@@ -61,9 +66,9 @@ public class SubscriptionController {
         return ResponseEntity.ok(subscriptionService.restart(id));
     }
 
-    @DeleteMapping("/{id}")
+    @PostMapping("/{id}/stop")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@PathVariable UUID id) {
+    public void stop(@PathVariable UUID id) {
         subscriptionService.stop(id);
     }
 }

@@ -15,13 +15,13 @@ import java.util.List;
 public class SubscriptionRecoveryListener {
 
     private final SubscriptionStorageService storageService;
-    private final ConnectionPoolService connectionPoolService;
+    private final SubscriptionService subscriptionService;
 
     @EventListener(ApplicationReadyEvent.class)
     public void onApplicationReady() {
         List<SubscriptionEntity> pending = storageService.findPendingRecovery();
         log.info("Запуск Crash Recovery: обнаружено {} подписок для восстановления", pending.size());
-        for (SubscriptionEntity entity : pending) {connectionPoolService.subscribe(entity);}
+        subscriptionService.recover(pending);
         log.info("Crash Recovery завершен: {} подписок зарегистрировано в пуле соединений", pending.size());
     }
 }

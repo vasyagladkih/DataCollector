@@ -4,48 +4,103 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.CreateSubscriptionResponse;
-import ru.datacollector.exceptions.SymbolNotFoundException;
 import ru.datacollector.mapper.SubscriptionMapper;
 import ru.datacollector.model.Status;
 import ru.datacollector.persistance.entity.SubscriptionEntity;
+import ru.tinkoff.piapi.contract.v1.Trade;
+import ru.tinkoff.piapi.contract.v1.TradeSourceType;
+import ru.ttech.piapi.core.connector.streaming.listeners.OnNextListener;
+import ru.ttech.piapi.core.impl.marketdata.subscription.Instrument;
+import ru.ttech.piapi.core.impl.marketdata.subscription.MarketDataSubscriptionResult;
+import ru.ttech.piapi.core.impl.marketdata.subscription.SubscriptionStatus;
+import ru.ttech.piapi.core.impl.marketdata.wrapper.OpenInterestWrapper;
+import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RequiredArgsConstructor
 @Service
 public class SubscriptionService {
 
     private final SubscriptionStorageService storageService;
-    private final ConnectionPoolService connectionPoolService;
-    private final KucoinRestService kucoinRestService;
     private final SubscriptionMapper mapper;
+    private final DataCollectorMarketDataStreamManager marketDataStreamManager;
+    private final OnNextListener<OpenInterestWrapper> openInterestStubListener = oi -> {};
+
+    private final OnNextListener<TradeWrapper> tradeListener = tradeWrapper -> {
+        Trade trade = tradeWrapper.getOriginal();
+        String symbol = trade.getInstrumentUid();
+
+        // TODO: Отправка сырых данных в Apache Kafka (задача #23)
+        System.out.printf("СДЕЛКА [%s]: цена %s, объем %d%n",
+                symbol,
+                tradeWrapper.getPrice(),
+                tradeWrapper.getQuantity());
+    };
 
     public CreateSubscriptionResponse subscribe(CreateSubscriptionRequest request) {
-        String result = kucoinRestService.fetch();
-        if (result == null) {
-            throw new SymbolNotFoundException("Валюта с текущим названием не найдена");
-        }
-
         SubscriptionEntity entity = storageService.getOrCreate(request);
-        connectionPoolService.subscribe(entity);
+        // Сетевой стрим инициируется строго первым подписчиком (refCount == 1), повторные запросы только увеличивают счетчик в БД.
+        if (entity.refCount() == 1) startStreamSubscription(entity);
+        return mapper.toDto(entity);
+    }
 
+    /**
+     * Батчевое восстановление стримов при Crash Recovery (пакетная отправка в gRPC).
+     *
+     * @param entities список незавершенных подписок из БД
+     */
+    public void recover(List<SubscriptionEntity> entities) {
+        Map<Instrument, SubscriptionEntity> targets = entities.stream()
+                .filter(e -> !marketDataStreamManager.isSubscribedTrades(new Instrument(e.symbol())))
+                .collect(Collectors.toMap(e -> new Instrument(e.symbol()), e -> e, (a, b) -> a));
+
+        if (targets.isEmpty()) return;
+
+        marketDataStreamManager.subscribeTradesAsync(
+                targets.keySet(),
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                tradeListener,
+                openInterestStubListener
+        ).whenComplete((result, error) -> handleBatchSubscriptionResult(targets, result, error));
+    }
+
+    public CreateSubscriptionResponse unsubscribe(UUID id) {
+        SubscriptionEntity entity = storageService.decrementRefCount(id);
+        if (entity.refCount() <= 0) {
+            var instrument = new Instrument(entity.symbol());
+            marketDataStreamManager.unsubscribeTrades(
+                    Set.of(instrument),
+                    false,
+                    TradeSourceType.TRADE_SOURCE_ALL
+            );
+        }
         return mapper.toDto(entity);
     }
 
     public CreateSubscriptionResponse restart(UUID id) {
         SubscriptionEntity entity = storageService.markRestarting(id);
-        connectionPoolService.restart(entity);
+        startStreamSubscription(entity);
         return mapper.toDto(entity);
     }
 
     public void stop(UUID id) {
-        storageService.markStopped(id);
-        connectionPoolService.stop(id);
+        SubscriptionEntity entity = storageService.markStopped(id);
+        var instrument = new Instrument(entity.symbol());
+        marketDataStreamManager.unsubscribeTrades(
+                Set.of(instrument),
+                false,
+                TradeSourceType.TRADE_SOURCE_ALL
+        );
     }
 
     public CreateSubscriptionResponse findById(UUID id) {
-        return mapper.toDto(storageService.getExisting(id));
+        return mapper.toDto(storageService.findById(id));
     }
 
     public List<CreateSubscriptionResponse> findAll(String exchange, String channel, Status status) {
@@ -53,5 +108,43 @@ public class SubscriptionService {
                 .stream()
                 .map(mapper::toDto)
                 .toList();
+    }
+
+    private void startStreamSubscription(SubscriptionEntity entity) {
+        var instrument = new Instrument(entity.symbol());
+
+        marketDataStreamManager.subscribeTradesAsync(
+                Set.of(instrument),
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                tradeListener,
+                openInterestStubListener
+        ).whenComplete((result, error) -> {
+            if (error != null) {
+                storageService.markFailed(entity.id(), error.getMessage());
+            } else if (result != null && result.getSubscriptionStatusMap().get(instrument) == SubscriptionStatus.OK) {
+                storageService.markActive(entity.id());
+            } else {
+                storageService.markFailed(entity.id(), "Subscription rejected by exchange");
+            }
+        });
+    }
+
+    private void handleBatchSubscriptionResult(Map<Instrument, SubscriptionEntity> targets,
+                                              MarketDataSubscriptionResult result,
+                                              Throwable error) {
+        if (error != null) {
+            targets.values().forEach(e -> storageService.markFailed(e.id(), error.getMessage()));
+            return;
+        }
+
+        var statusMap = (result != null) ? result.getSubscriptionStatusMap() : Map.<Instrument, SubscriptionStatus>of();
+        targets.forEach((instrument, entity) -> {
+            if (statusMap.get(instrument) == SubscriptionStatus.OK) {
+                storageService.markActive(entity.id());
+            } else {
+                storageService.markFailed(entity.id(), "Subscription rejected by exchange");
+            }
+        });
     }
 }

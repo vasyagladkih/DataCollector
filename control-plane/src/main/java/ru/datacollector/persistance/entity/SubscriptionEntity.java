@@ -22,8 +22,55 @@ public record SubscriptionEntity(
         @Column("created_at")
         Instant createdAt,
         @Column("updated_at")
-        Instant updatedAt
+        Instant updatedAt,
+        @Column("ref_count")
+        int refCount
 ) {
+
+    public SubscriptionEntity withDecrementedRef() {
+        int updatedRefCount = Math.max(0, this.refCount - 1);
+        Status newStatus = (updatedRefCount == 0) ? Status.TERMINATED : this.status;
+        return new SubscriptionEntity(
+                this.id,
+                this.exchange,
+                this.channel,
+                this.symbol,
+                newStatus,
+                null,
+                this.createdAt,
+                Instant.now(),
+                updatedRefCount
+        );
+    }
+
+    public SubscriptionEntity withTerminated() {
+        return new SubscriptionEntity(
+                this.id,
+                this.exchange,
+                this.channel,
+                this.symbol,
+                Status.TERMINATED,
+                null,
+                this.createdAt,
+                Instant.now(),
+                0
+        );
+    }
+
+    public SubscriptionEntity withRestarting() {
+        return new SubscriptionEntity(
+                this.id,
+                this.exchange,
+                this.channel,
+                this.symbol,
+                Status.CONNECTING,
+                null,
+                this.createdAt,
+                Instant.now(),
+                this.refCount
+        );
+    }
+
     public SubscriptionEntity withStatus(Status newStatus) {
         return new SubscriptionEntity(
                 this.id,
@@ -33,7 +80,36 @@ public record SubscriptionEntity(
                 newStatus,
                 this.errorMessage,
                 this.createdAt,
-                Instant.now()
+                Instant.now(),
+                this.refCount
+        );
+    }
+
+    public SubscriptionEntity withActive() {
+        return new SubscriptionEntity(
+                this.id,
+                this.exchange,
+                this.channel,
+                this.symbol,
+                Status.ACTIVE,
+                null,
+                this.createdAt,
+                Instant.now(),
+                this.refCount
+        );
+    }
+
+    public SubscriptionEntity withFailed(String errorMessage) {
+        return new SubscriptionEntity(
+                this.id,
+                this.exchange,
+                this.channel,
+                this.symbol,
+                Status.FAILED,
+                errorMessage,
+                this.createdAt,
+                Instant.now(),
+                this.refCount
         );
     }
 }
