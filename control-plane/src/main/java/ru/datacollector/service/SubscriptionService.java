@@ -31,7 +31,7 @@ public class SubscriptionService {
     private final SubscriptionStorageService storageService;
     private final SubscriptionMapper mapper;
     private final DataCollectorMarketDataStreamManager marketDataStreamManager;
-    private final OnNextListener<OpenInterestWrapper> openInterestStubListener = _ -> {};
+    private static final OnNextListener<OpenInterestWrapper> openInterestStubListener = _ -> {};
 
     private final OnNextListener<TradeWrapper> tradeListener = tradeWrapper -> {
         Trade trade = tradeWrapper.getOriginal();
@@ -62,7 +62,7 @@ public class SubscriptionService {
 
         if (targets.isEmpty()) return;
 
-        marketDataStreamManager.subscribeTradesAsync(
+        marketDataStreamManager.subscribeTradesBatchAsync(
                 targets.keySet(),
                 TradeSourceType.TRADE_SOURCE_ALL,
                 false,
@@ -104,16 +104,16 @@ public class SubscriptionService {
     private void startStreamSubscription(SubscriptionEntity entity) {
         var instrument = new Instrument(entity.symbol());
 
-        marketDataStreamManager.subscribeTradesAsync(
-                Set.of(instrument),
+        marketDataStreamManager.subscribeTradeAsync(
+                instrument,
                 TradeSourceType.TRADE_SOURCE_ALL,
                 false,
                 tradeListener,
                 openInterestStubListener
-        ).whenComplete((result, error) -> {
+        ).whenComplete((status, error) -> {
             if (error != null) {
                 storageService.markFailed(entity.id(), error.getMessage());
-            } else if (result != null && result.getSubscriptionStatusMap().get(instrument) == SubscriptionStatus.OK) {
+            } else if (status == SubscriptionStatus.OK) {
                 storageService.markActive(entity.id());
             } else {
                 storageService.markFailed(entity.id(), "Subscription rejected by exchange");

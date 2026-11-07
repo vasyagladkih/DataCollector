@@ -50,6 +50,7 @@ class DataCollectorMarketDataStreamManagerTest {
 
     private static final String FIGI = "BBG004730N88";
     private static final Instrument INSTRUMENT = new Instrument(FIGI);
+    private static final Instrument INSTRUMENT_2 = new Instrument("SBER");
 
     private static final OnNextListener<TradeWrapper> NOOP_TRADE_LISTENER = Objects::requireNonNull;
     private static final OnNextListener<OpenInterestWrapper> NOOP_OI_LISTENER = Objects::requireNonNull;
@@ -126,16 +127,16 @@ class DataCollectorMarketDataStreamManagerTest {
     }
 
     // =========================================================================
-    // Группа 2: Бизнес-логика подписок (subscribeTradesAsync)
+    // Группа 2: Бизнес-логика пакетных подписок (subscribeTradesBatchAsync)
     // =========================================================================
 
     @Test
     @DisplayName("4. Если инструмент уже в стриме, возвращается немедленный OK без сетевого вызова")
-    void subscribeTradesAsync_whenAlreadySubscribed_shouldReturnImmediateOk() {
+    void subscribeTradesBatchAsync_whenAlreadySubscribed_shouldReturnImmediateOk() {
         var spyManager = spy(manager);
         doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT);
 
-        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesAsync(
+        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
                 Set.of(INSTRUMENT),
                 TradeSourceType.TRADE_SOURCE_ALL,
                 false,
@@ -154,7 +155,7 @@ class DataCollectorMarketDataStreamManagerTest {
 
     @Test
     @DisplayName("5. Если инструмент новый, слушатели регистрируются в коллбэке успешной сетевой подписки")
-    void subscribeTradesAsync_whenNewInstrument_shouldRegisterListenersOnSuccess() {
+    void subscribeTradesBatchAsync_whenNewInstrument_shouldRegisterListenersOnSuccess() {
         var spyManager = spy(manager);
         doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT);
 
@@ -166,7 +167,7 @@ class DataCollectorMarketDataStreamManagerTest {
         doReturn(CompletableFuture.completedFuture(mockResult))
                 .when(spyManager).subscribe(any(), any(), any());
 
-        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesAsync(
+        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
                 Set.of(INSTRUMENT),
                 TradeSourceType.TRADE_SOURCE_ALL,
                 false,
@@ -185,14 +186,14 @@ class DataCollectorMarketDataStreamManagerTest {
 
     @Test
     @DisplayName("6. Ошибка gRPC: при сбое сетевого стрима фьючер завершается с ошибкой, а слушатели не сохраняются")
-    void subscribeTradesAsync_whenGrpcFails_shouldNotRegisterListenersAndFailFuture() {
+    void subscribeTradesBatchAsync_whenGrpcFails_shouldNotRegisterListenersAndFailFuture() {
         var spyManager = spy(manager);
         doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT);
 
         doReturn(CompletableFuture.failedFuture(new RuntimeException("gRPC network error")))
                 .when(spyManager).subscribe(any(), any(), any());
 
-        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesAsync(
+        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
                 Set.of(INSTRUMENT),
                 TradeSourceType.TRADE_SOURCE_ALL,
                 false,
@@ -210,12 +211,12 @@ class DataCollectorMarketDataStreamManagerTest {
 
     @Test
     @DisplayName("7. Идемпотентность регистрации: повторная подписка на уже активный инструмент не должна дублировать слушателей")
-    void subscribeTradesAsync_whenAlreadySubscribed_shouldNotDuplicateListeners() {
+    void subscribeTradesBatchAsync_whenAlreadySubscribed_shouldNotDuplicateListeners() {
         var spyManager = spy(manager);
         doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT);
 
         for (int i = 0; i < 3; i++) {
-            CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesAsync(
+            CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
                     Set.of(INSTRUMENT),
                     TradeSourceType.TRADE_SOURCE_ALL,
                     false,
@@ -226,10 +227,10 @@ class DataCollectorMarketDataStreamManagerTest {
         }
 
         assertThat(spyManager.getTradeListeners())
-                .as("Повторные вызовы subscribeTradesAsync не должны приводить к дублированию слушателей одного стрима")
+                .as("Повторные вызовы subscribeTradesBatchAsync не должны приводить к дублированию слушателей одного стрима")
                 .hasSize(1);
         assertThat(spyManager.getOpenInterestListeners())
-                .as("Повторные вызовы subscribeTradesAsync не должны приводить к дублированию слушателей открытого интереса")
+                .as("Повторные вызовы subscribeTradesBatchAsync не должны приводить к дублированию слушателей открытого интереса")
                 .hasSize(1);
     }
 
@@ -284,7 +285,7 @@ class DataCollectorMarketDataStreamManagerTest {
             for (int i = 0; i < threadCount * 50; i++) {
                 pool.execute(() -> {
                     try {
-                        spyManager.subscribeTradesAsync(
+                        spyManager.subscribeTradesBatchAsync(
                                 Set.of(INSTRUMENT),
                                 TradeSourceType.TRADE_SOURCE_ALL,
                                 false,
@@ -341,7 +342,7 @@ class DataCollectorMarketDataStreamManagerTest {
             boolean entered = insideIterationLatch.await(1, TimeUnit.SECONDS);
             assertThat(entered).isTrue();
 
-            Future<?> clientFuture = pool.submit(() -> spyManager.subscribeTradesAsync(
+            Future<?> clientFuture = pool.submit(() -> spyManager.subscribeTradesBatchAsync(
                     Set.of(INSTRUMENT),
                     TradeSourceType.TRADE_SOURCE_ALL,
                     false,
@@ -358,6 +359,118 @@ class DataCollectorMarketDataStreamManagerTest {
 
             assertThat(clientFuture).isDone();
         }
+    }
+
+    // =========================================================================
+    // Группа 4: Новые контракты Live (single) и Recovery (batch) подписок
+    // =========================================================================
+
+    @Test
+    @DisplayName("10. subscribeTradeAsync: при уже активной подписке возвращает немедленный OK")
+    void subscribeTradeAsync_whenAlreadySubscribed_shouldReturnImmediateOk() {
+        var spyManager = spy(manager);
+        doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT);
+
+        CompletableFuture<SubscriptionStatus> future = spyManager.subscribeTradeAsync(
+                INSTRUMENT,
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+
+        assertThat(future).isCompleted();
+        assertThat(future.join()).isEqualTo(SubscriptionStatus.OK);
+        assertThat(spyManager.getTradeListeners()).hasSize(1);
+        assertThat(spyManager.getOpenInterestListeners()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("11. subscribeTradeAsync: для нового инструмента запрашивает стрим и возвращает статус биржи")
+    void subscribeTradeAsync_whenNewInstrument_shouldReturnStatusFromNetwork() {
+        var spyManager = spy(manager);
+        doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT);
+
+        var mockResult = new MarketDataSubscriptionResult(
+                RequestAction.SUBSCRIBE,
+                MarketDataResponseType.TRADE,
+                Map.of(INSTRUMENT, SubscriptionStatus.OK)
+        );
+        doReturn(CompletableFuture.completedFuture(mockResult))
+                .when(spyManager).subscribe(any(), any(), any());
+
+        CompletableFuture<SubscriptionStatus> future = spyManager.subscribeTradeAsync(
+                INSTRUMENT,
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+
+        assertThat(future).isCompleted();
+        assertThat(future.join()).isEqualTo(SubscriptionStatus.OK);
+        assertThat(spyManager.getTradeListeners()).hasSize(1);
+        assertThat(spyManager.getOpenInterestListeners()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("12. subscribeTradesBatchAsync: для смешанного набора объединяет активные и новые инструменты без ложного FAILED")
+    void subscribeTradesBatchAsync_whenMixedInstruments_shouldMergeActiveInstrumentsWithOkStatus() {
+        var spyManager = spy(manager);
+        doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT);
+        doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT_2);
+
+        var mockNetworkResult = new MarketDataSubscriptionResult(
+                RequestAction.SUBSCRIBE,
+                MarketDataResponseType.TRADE,
+                Map.of(INSTRUMENT_2, SubscriptionStatus.OK)
+        );
+        doReturn(CompletableFuture.completedFuture(mockNetworkResult))
+                .when(spyManager).subscribe(any(), any(), any());
+
+        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
+                Set.of(INSTRUMENT, INSTRUMENT_2),
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+
+        assertThat(future).isCompleted();
+        MarketDataSubscriptionResult result = future.join();
+        assertThat(result).isNotNull();
+        assertThat(result.getSubscriptionStatusMap()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                INSTRUMENT, SubscriptionStatus.OK,
+                INSTRUMENT_2, SubscriptionStatus.OK
+        ));
+        assertThat(spyManager.getTradeListeners()).hasSize(1);
+        assertThat(spyManager.getOpenInterestListeners()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("13. subscribeTradesBatchAsync: если все инструменты уже подписаны, возвращает OK без обращения в сеть")
+    void subscribeTradesBatchAsync_whenAllAlreadySubscribed_shouldReturnImmediateOk() {
+        var spyManager = spy(manager);
+        doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT);
+        doReturn(true).when(spyManager).isSubscribedTrades(INSTRUMENT_2);
+
+        CompletableFuture<MarketDataSubscriptionResult> future = spyManager.subscribeTradesBatchAsync(
+                Set.of(INSTRUMENT, INSTRUMENT_2),
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+
+        assertThat(future).isCompleted();
+        MarketDataSubscriptionResult result = future.join();
+        assertThat(result).isNotNull();
+        assertThat(result.getSubscriptionStatusMap()).containsExactlyInAnyOrderEntriesOf(Map.of(
+                INSTRUMENT, SubscriptionStatus.OK,
+                INSTRUMENT_2, SubscriptionStatus.OK
+        ));
+        assertThat(spyManager.getTradeListeners()).hasSize(1);
+        assertThat(spyManager.getOpenInterestListeners()).hasSize(1);
     }
 
     /**

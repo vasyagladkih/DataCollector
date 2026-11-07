@@ -109,7 +109,7 @@ class SubscriptionServiceTest {
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
         when(mapper.toDto(entity)).thenReturn(expectedResponse);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new CompletableFuture<>());
 
         SubscriptionResponse actual = subscriptionService.subscribe(request);
@@ -117,8 +117,8 @@ class SubscriptionServiceTest {
         assertThat(actual).isEqualTo(expectedResponse);
         verify(storageService).getOrCreate(request);
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 any(),
@@ -142,7 +142,7 @@ class SubscriptionServiceTest {
         assertThat(actual).isEqualTo(expectedResponse);
         verify(storageService).getOrCreate(request);
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager, never()).subscribeTradesAsync(any(), any(), anyBoolean(), any(), any());
+        verify(marketDataStreamManager, never()).subscribeTradeAsync(any(), any(), anyBoolean(), any(), any());
         verifyNoMoreInteractions(storageService, mapper, marketDataStreamManager);
     }
 
@@ -151,15 +151,10 @@ class SubscriptionServiceTest {
     void subscribe_whenStreamSucceeds_marksActiveInStorage() {
         var request = new CreateSubscriptionRequest(EXCHANGE, SYMBOL, CHANNEL);
         SubscriptionEntity entity = createEntity(Status.CONNECTING, 1);
-        var mockResult = new MarketDataSubscriptionResult(
-                RequestAction.SUBSCRIBE,
-                MarketDataResponseType.TRADE,
-                Map.of(INSTRUMENT, SubscriptionStatus.OK)
-        );
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(mockResult));
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(SubscriptionStatus.OK));
 
         subscriptionService.subscribe(request);
 
@@ -167,8 +162,8 @@ class SubscriptionServiceTest {
         verify(storageService).markActive(TEST_ID);
         verify(storageService, never()).markFailed(any(), any());
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 any(),
@@ -182,15 +177,10 @@ class SubscriptionServiceTest {
     void subscribe_whenStreamRejectedByExchange_marksFailedInStorage() {
         var request = new CreateSubscriptionRequest(EXCHANGE, SYMBOL, CHANNEL);
         SubscriptionEntity entity = createEntity(Status.CONNECTING, 1);
-        var mockResult = new MarketDataSubscriptionResult(
-                RequestAction.SUBSCRIBE,
-                MarketDataResponseType.TRADE,
-                Map.of(INSTRUMENT, SubscriptionStatus.ERROR)
-        );
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(mockResult));
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(SubscriptionStatus.ERROR));
 
         subscriptionService.subscribe(request);
 
@@ -198,8 +188,8 @@ class SubscriptionServiceTest {
         verify(storageService).markFailed(TEST_ID, REJECTED_BY_EXCHANGE);
         verify(storageService, never()).markActive(any());
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 any(),
@@ -215,7 +205,7 @@ class SubscriptionServiceTest {
         SubscriptionEntity entity = createEntity(Status.CONNECTING, 1);
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException(ERROR_MESSAGE)));
 
         subscriptionService.subscribe(request);
@@ -224,8 +214,8 @@ class SubscriptionServiceTest {
         verify(storageService).markFailed(TEST_ID, ERROR_MESSAGE);
         verify(storageService, never()).markActive(any());
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 any(),
@@ -290,7 +280,7 @@ class SubscriptionServiceTest {
 
         when(storageService.markRestarting(TEST_ID)).thenReturn(entity);
         when(mapper.toDto(entity)).thenReturn(expectedResponse);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new CompletableFuture<>());
 
         SubscriptionResponse actual = subscriptionService.restart(TEST_ID);
@@ -298,8 +288,8 @@ class SubscriptionServiceTest {
         assertThat(actual).isEqualTo(expectedResponse);
         verify(storageService).markRestarting(TEST_ID);
         verify(mapper).toDto(entity);
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 any(),
@@ -319,7 +309,7 @@ class SubscriptionServiceTest {
                 .hasMessage("Cannot restart ACTIVE subscription");
 
         verify(storageService).markRestarting(TEST_ID);
-        verify(marketDataStreamManager, never()).subscribeTradesAsync(any(), any(), anyBoolean(), any(), any());
+        verify(marketDataStreamManager, never()).subscribeTradeAsync(any(), any(), anyBoolean(), any(), any());
         verifyNoMoreInteractions(storageService, mapper, marketDataStreamManager);
     }
 
@@ -334,7 +324,7 @@ class SubscriptionServiceTest {
 
         subscriptionService.recover(emptyList);
 
-        verify(marketDataStreamManager, never()).subscribeTradesAsync(any(), any(), anyBoolean(), any(), any());
+        verify(marketDataStreamManager, never()).subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any());
         verifyNoMoreInteractions(storageService, mapper, marketDataStreamManager);
     }
 
@@ -347,7 +337,7 @@ class SubscriptionServiceTest {
         subscriptionService.recover(List.of(entity));
 
         verify(marketDataStreamManager).isSubscribedTrades(INSTRUMENT);
-        verify(marketDataStreamManager, never()).subscribeTradesAsync(any(), any(), anyBoolean(), any(), any());
+        verify(marketDataStreamManager, never()).subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any());
         verifyNoMoreInteractions(storageService, mapper, marketDataStreamManager);
     }
 
@@ -369,7 +359,7 @@ class SubscriptionServiceTest {
                         INSTRUMENT_2, SubscriptionStatus.OK
                 )
         );
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockResult));
 
         subscriptionService.recover(List.of(entity1, entity2));
@@ -398,7 +388,7 @@ class SubscriptionServiceTest {
                         INSTRUMENT_2, SubscriptionStatus.ERROR
                 )
         );
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockResult));
 
         subscriptionService.recover(List.of(entity1, entity2));
@@ -417,7 +407,7 @@ class SubscriptionServiceTest {
         );
 
         when(marketDataStreamManager.isSubscribedTrades(any())).thenReturn(false);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.failedFuture(new RuntimeException(ERROR_MESSAGE)));
 
         subscriptionService.recover(List.of(entity1, entity2));
@@ -484,12 +474,12 @@ class SubscriptionServiceTest {
                 MarketDataResponseType.TRADE,
                 Map.of(INSTRUMENT, SubscriptionStatus.OK)
         );
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockResult));
 
         subscriptionService.recover(List.of(entity1, entity1Dup));
 
-        verify(marketDataStreamManager).subscribeTradesAsync(
+        verify(marketDataStreamManager).subscribeTradesBatchAsync(
                 eq(Set.of(INSTRUMENT)),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
@@ -516,14 +506,14 @@ class SubscriptionServiceTest {
                 MarketDataResponseType.TRADE,
                 Map.of(INSTRUMENT_2, SubscriptionStatus.OK)
         );
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(mockResult));
 
         subscriptionService.recover(List.of(entity1, entity2));
 
         verify(marketDataStreamManager).isSubscribedTrades(INSTRUMENT);
         verify(marketDataStreamManager).isSubscribedTrades(INSTRUMENT_2);
-        verify(marketDataStreamManager).subscribeTradesAsync(
+        verify(marketDataStreamManager).subscribeTradesBatchAsync(
                 eq(Set.of(INSTRUMENT_2)),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
@@ -541,7 +531,7 @@ class SubscriptionServiceTest {
         SubscriptionEntity entity = createEntity(Status.CONNECTING, 1);
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(CompletableFuture.completedFuture(null));
 
         subscriptionService.subscribe(request);
@@ -560,7 +550,7 @@ class SubscriptionServiceTest {
         SubscriptionEntity entity = createEntity(Status.CONNECTING, 1);
 
         when(storageService.getOrCreate(request)).thenReturn(entity);
-        when(marketDataStreamManager.subscribeTradesAsync(any(), any(), anyBoolean(), any(), any()))
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
                 .thenReturn(new CompletableFuture<>());
 
         subscriptionService.subscribe(request);
@@ -570,8 +560,8 @@ class SubscriptionServiceTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<OnNextListener<OpenInterestWrapper>> oiCaptor = ArgumentCaptor.forClass(OnNextListener.class);
 
-        verify(marketDataStreamManager).subscribeTradesAsync(
-                eq(Set.of(INSTRUMENT)),
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(INSTRUMENT),
                 eq(TradeSourceType.TRADE_SOURCE_ALL),
                 eq(false),
                 tradeCaptor.capture(),

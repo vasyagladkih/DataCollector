@@ -20,9 +20,11 @@ import ru.ttech.piapi.core.impl.marketdata.util.MarketDataRequestBuilder;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.OpenInterestWrapper;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 
+import java.util.HashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -41,6 +43,8 @@ public class DataCollectorMarketDataStreamManager
         implements SmartLifecycle {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
+    private final Set<Instrument> activeTradeInstruments = ConcurrentHashMap.newKeySet();
+    private final Set<Instrument> activeOiInstruments = ConcurrentHashMap.newKeySet();
 
     public DataCollectorMarketDataStreamManager(
             StreamServiceStubFactory streamFactory,
@@ -66,6 +70,9 @@ public class DataCollectorMarketDataStreamManager
                 super.shutdown();
             } catch (Exception e) {
                 log.error("Ошибка при остановке DataCollectorMarketDataStreamManager", e);
+            } finally {
+                activeTradeInstruments.clear();
+                activeOiInstruments.clear();
             }
         }
     }
@@ -76,18 +83,76 @@ public class DataCollectorMarketDataStreamManager
     }
 
     /**
-     * Асинхронная подписка на сделки с возвратом {@link CompletableFuture}.
+     * Асинхронная единичная подписка на сделки для одного инструмента (Live-режим).
      *
-     * @param instruments             список инструментов
+     * @param instrument              инструмент
      * @param tradeSourceType         тип источника сделок
      * @param withOpenInterest        флаг открытого интереса
      * @param onTradeListener         слушатель сделок
      * @param onOpenInterestListener  слушатель открытого интереса
-     * @return фьючер с детальным результатом подписки от сервера биржи
+     * @return фьючер со статусом подписки (OK, ERROR и т.д.)
      */
-    // TODO: Разделить recovery (батчевая подписка на коллекцию при рестарте) и live (единичная подписка на один инструмент),
-    //       чтобы исключить уязвимость контракта при передаче смешанного набора (уже подписанные + новые инструменты).
-    public CompletableFuture<MarketDataSubscriptionResult> subscribeTradesAsync(
+    public CompletableFuture<SubscriptionStatus> subscribeTradeAsync(
+            Instrument instrument,
+            TradeSourceType tradeSourceType,
+            boolean withOpenInterest,
+            OnNextListener<TradeWrapper> onTradeListener,
+            OnNextListener<OpenInterestWrapper> onOpenInterestListener
+    ) {
+        var instruments = Set.of(instrument);
+        var wrappedTradeListener = filterByInstrumentId(
+                instruments, trade -> InstrumentMapper.map(trade.getOriginal()), onTradeListener
+        );
+        var wrappedOpenInterestListener = filterByInstrumentId(
+                instruments, openInterest -> InstrumentMapper.map(openInterest.getOriginal()), onOpenInterestListener
+        );
+
+        if (isSubscribedTrades(instrument)) {
+            registerTradeListenerIfAbsent(instruments, wrappedTradeListener);
+            registerOiListenerIfAbsent(instruments, wrappedOpenInterestListener);
+            return CompletableFuture.completedFuture(SubscriptionStatus.OK);
+        }
+
+        Function<List<Instrument>, MarketDataRequest> requestBuilder = instrumentsSublist ->
+                MarketDataRequestBuilder.buildTradesRequest(
+                        instrumentsSublist,
+                        tradeSourceType,
+                        withOpenInterest,
+                        SubscriptionAction.SUBSCRIPTION_ACTION_SUBSCRIBE
+                );
+
+        return subscribe(MarketDataResponseType.TRADE, instruments, requestBuilder)
+                .whenComplete((subscriptionResult, throwable) -> {
+                    if (throwable != null) {
+                        log.error("Ошибка при подписке на сделки для инструмента: {}", instrument, throwable);
+                        return;
+                    }
+                    if (subscriptionResult != null) {
+                        registerTradeListenerIfAbsent(instruments, wrappedTradeListener);
+                        registerOiListenerIfAbsent(instruments, wrappedOpenInterestListener);
+                    }
+                })
+                .thenApply(result -> {
+                    if (result != null && result.getSubscriptionStatusMap() != null) {
+                        return result.getSubscriptionStatusMap().getOrDefault(instrument, SubscriptionStatus.ERROR);
+                    }
+                    return SubscriptionStatus.ERROR;
+                });
+    }
+
+    /**
+     * Асинхронная пакетная подписка на сделки для набора инструментов (Crash Recovery режим).
+     * Если часть инструментов уже активна в стриме, сетевой запрос отправляется только для новых,
+     * а их статус OK объединяется с ответом биржи, предотвращая потерю подписок.
+     *
+     * @param instruments             набор инструментов
+     * @param tradeSourceType         тип источника сделок
+     * @param withOpenInterest        флаг открытого интереса
+     * @param onTradeListener         слушатель сделок
+     * @param onOpenInterestListener  слушатель открытого интереса
+     * @return фьючер с детальным объединенным результатом подписки для всех запрошенных инструментов
+     */
+    public CompletableFuture<MarketDataSubscriptionResult> subscribeTradesBatchAsync(
             Set<Instrument> instruments,
             TradeSourceType tradeSourceType,
             boolean withOpenInterest,
@@ -101,14 +166,17 @@ public class DataCollectorMarketDataStreamManager
                 instruments, openInterest -> InstrumentMapper.map(openInterest.getOriginal()), onOpenInterestListener
         );
 
-        var filteredInstruments = instruments.stream()
-                .filter(instrument -> !isSubscribedTrades(instrument))
+        var alreadySubscribed = instruments.stream()
+                .filter(this::isSubscribedTrades)
                 .collect(Collectors.toUnmodifiableSet());
 
-        if (filteredInstruments.isEmpty()) {
-            // TODO #25: Потенциальный ConcurrentModificationException при добавлении слушателя в несинхронизированный forEach воркера SDK
-            addWrapperListener(context.getOnTradeListeners(), wrappedTradeListener);
-            addWrapperListener(context.getOnOpenInterestListeners(), wrappedOpenInterestListener);
+        var needNetworkSubscription = instruments.stream()
+                .filter(instrument -> !alreadySubscribed.contains(instrument))
+                .collect(Collectors.toUnmodifiableSet());
+
+        if (needNetworkSubscription.isEmpty()) {
+            registerTradeListenerIfAbsent(instruments, wrappedTradeListener);
+            registerOiListenerIfAbsent(instruments, wrappedOpenInterestListener);
 
             return CompletableFuture.completedFuture(new MarketDataSubscriptionResult(
                     RequestAction.SUBSCRIBE,
@@ -128,16 +196,46 @@ public class DataCollectorMarketDataStreamManager
                         SubscriptionAction.SUBSCRIPTION_ACTION_SUBSCRIBE
                 );
 
-        return subscribe(MarketDataResponseType.TRADE, filteredInstruments, requestBuilder)
+        return subscribe(MarketDataResponseType.TRADE, needNetworkSubscription, requestBuilder)
                 .whenComplete((subscriptionResult, throwable) -> {
                     if (throwable != null) {
-                        log.error("Ошибка при подписке на сделки для инструментов: {}", filteredInstruments, throwable);
+                        log.error("Ошибка при пакетной подписке на сделки для инструментов: {}", needNetworkSubscription, throwable);
                         return;
                     }
                     if (subscriptionResult != null) {
-                        addWrapperListener(context.getOnTradeListeners(), wrappedTradeListener);
-                        addWrapperListener(context.getOnOpenInterestListeners(), wrappedOpenInterestListener);
+                        registerTradeListenerIfAbsent(instruments, wrappedTradeListener);
+                        registerOiListenerIfAbsent(instruments, wrappedOpenInterestListener);
                     }
+                })
+                .thenApply(networkResult -> {
+                    if (alreadySubscribed.isEmpty() || networkResult == null) {
+                        return networkResult;
+                    }
+                    var fullStatusMap = new HashMap<>(networkResult.getSubscriptionStatusMap());
+                    for (Instrument subscribed : alreadySubscribed) {
+                        fullStatusMap.put(subscribed, SubscriptionStatus.OK);
+                    }
+                    return new MarketDataSubscriptionResult(
+                            networkResult.getSubscriptionAction(),
+                            networkResult.getResponseType(),
+                            fullStatusMap
+                    );
                 });
+    }
+
+    private void registerTradeListenerIfAbsent(Set<Instrument> instruments, OnNextListener<TradeWrapper> listener) {
+        boolean isNew = false;
+        for (Instrument instrument : instruments) {
+            if (activeTradeInstruments.add(instrument)) isNew = true;
+        }
+        if (isNew) addWrapperListener(context.getOnTradeListeners(), listener);
+    }
+
+    private void registerOiListenerIfAbsent(Set<Instrument> instruments, OnNextListener<OpenInterestWrapper> listener) {
+        boolean isNew = false;
+        for (Instrument instrument : instruments) {
+            if (activeOiInstruments.add(instrument)) isNew = true;
+        }
+        if (isNew) addWrapperListener(context.getOnOpenInterestListeners(), listener);
     }
 }

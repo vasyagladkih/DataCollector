@@ -44,7 +44,7 @@ class SubscriptionRepositoryIT {
 
     private SubscriptionEntity createAndSave(String exchange, String channel, String symbol,
                                              Status status, String error, int refCount) {
-        Instant now = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        Instant past = Instant.now().minus(1, ChronoUnit.SECONDS).truncatedTo(ChronoUnit.MICROS);
         SubscriptionEntity entity = new SubscriptionEntity(
                 null,
                 exchange,
@@ -52,8 +52,8 @@ class SubscriptionRepositoryIT {
                 symbol,
                 status,
                 error,
-                now,
-                now,
+                past,
+                past,
                 refCount
         );
         return repository.save(entity);
