@@ -1,4 +1,4 @@
-package ru.datacollector.persistance;
+package ru.datacollector.repository;
 
 import org.springframework.data.jdbc.repository.query.Query;
 import org.springframework.data.relational.core.sql.LockMode;
@@ -7,7 +7,7 @@ import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 import ru.datacollector.model.Status;
-import ru.datacollector.persistance.entity.SubscriptionEntity;
+import ru.datacollector.repository.entity.SubscriptionEntity;
 
 import java.util.Collection;
 import java.util.List;

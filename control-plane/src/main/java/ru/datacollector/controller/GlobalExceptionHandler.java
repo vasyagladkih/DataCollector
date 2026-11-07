@@ -1,4 +1,4 @@
-package ru.datacollector.api;
+package ru.datacollector.controller;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -6,9 +6,9 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import ru.datacollector.dto.ErrorResponse;
-import ru.datacollector.exceptions.IllegalSubscriptionStateException;
-import ru.datacollector.exceptions.SubscriptionNotFoundException;
-import ru.datacollector.exceptions.SymbolNotFoundException;
+import ru.datacollector.exception.IllegalSubscriptionStateException;
+import ru.datacollector.exception.SubscriptionNotFoundException;
+import ru.datacollector.exception.SymbolNotFoundException;
 
 import java.time.Instant;
 

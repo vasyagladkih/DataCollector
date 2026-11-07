@@ -4,12 +4,11 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import ru.datacollector.dto.CreateSubscriptionRequest;
-import ru.datacollector.exceptions.IllegalSubscriptionStateException;
-import ru.datacollector.exceptions.SubscriptionNotFoundException;
-import ru.datacollector.mapper.SubscriptionMapper;
+import ru.datacollector.exception.IllegalSubscriptionStateException;
+import ru.datacollector.exception.SubscriptionNotFoundException;
 import ru.datacollector.model.Status;
-import ru.datacollector.persistance.SubscriptionRepository;
-import ru.datacollector.persistance.entity.SubscriptionEntity;
+import ru.datacollector.repository.SubscriptionRepository;
+import ru.datacollector.repository.entity.SubscriptionEntity;
 
 import java.util.List;
 import java.util.UUID;
@@ -20,7 +19,6 @@ import java.util.function.UnaryOperator;
 public class SubscriptionStorageService {
 
     private final SubscriptionRepository repository;
-    private final SubscriptionMapper mapper;
 
     @Transactional
     public SubscriptionEntity getOrCreate(CreateSubscriptionRequest request) {
@@ -75,14 +73,6 @@ public class SubscriptionStorageService {
                 );
             }
             return entity.withRestarting();
-        });
-    }
-
-    @Transactional
-    public SubscriptionEntity markStopped(UUID id) {
-        return update(id, entity -> {
-            if (entity.status() == Status.TERMINATED && entity.refCount() == 0) return entity;
-            return entity.withTerminated();
         });
     }
 

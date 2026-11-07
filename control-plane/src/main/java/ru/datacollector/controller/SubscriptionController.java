@@ -1,4 +1,4 @@
-package ru.datacollector.api;
+package ru.datacollector.controller;
 
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -11,10 +11,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import ru.datacollector.dto.CreateSubscriptionRequest;
-import ru.datacollector.dto.CreateSubscriptionResponse;
+import ru.datacollector.dto.SubscriptionResponse;
 import ru.datacollector.model.Status;
 import ru.datacollector.service.SubscriptionService;
 
@@ -29,7 +28,7 @@ public class SubscriptionController {
     private final SubscriptionService subscriptionService;
 
     @PostMapping
-    public ResponseEntity<CreateSubscriptionResponse> subscribe(
+    public ResponseEntity<SubscriptionResponse> subscribe(
             @Valid @RequestBody CreateSubscriptionRequest createSubscriptionRequest) {
 
         return ResponseEntity
@@ -38,17 +37,17 @@ public class SubscriptionController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<CreateSubscriptionResponse> unsubscribe(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> unsubscribe(@PathVariable UUID id) {
         return ResponseEntity.ok(subscriptionService.unsubscribe(id));
     }
 
     @GetMapping
-    public ResponseEntity<List<CreateSubscriptionResponse>> getSubscriptions(
+    public ResponseEntity<List<SubscriptionResponse>> getSubscriptions(
             @RequestParam(required = false) String exchange,
             @RequestParam(required = false) String channel,
             @RequestParam(required = false) Status status
     ) {
-        List<CreateSubscriptionResponse> subscriptions = subscriptionService.findAll(
+        List<SubscriptionResponse> subscriptions = subscriptionService.findAll(
                 exchange,
                 channel,
                 status
@@ -57,18 +56,12 @@ public class SubscriptionController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<CreateSubscriptionResponse> getById(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> getById(@PathVariable UUID id) {
         return ResponseEntity.ok(subscriptionService.findById(id));
     }
 
     @PostMapping("/{id}/restart")
-    public ResponseEntity<CreateSubscriptionResponse> restart(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> restart(@PathVariable UUID id) {
         return ResponseEntity.ok(subscriptionService.restart(id));
-    }
-
-    @PostMapping("/{id}/stop")
-    @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void stop(@PathVariable UUID id) {
-        subscriptionService.stop(id);
     }
 }

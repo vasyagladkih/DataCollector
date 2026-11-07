@@ -3,10 +3,11 @@ package ru.datacollector.service;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import ru.datacollector.dto.CreateSubscriptionRequest;
-import ru.datacollector.dto.CreateSubscriptionResponse;
+import ru.datacollector.dto.SubscriptionResponse;
 import ru.datacollector.mapper.SubscriptionMapper;
 import ru.datacollector.model.Status;
-import ru.datacollector.persistance.entity.SubscriptionEntity;
+import ru.datacollector.repository.entity.SubscriptionEntity;
+import ru.datacollector.streaming.DataCollectorMarketDataStreamManager;
 import ru.tinkoff.piapi.contract.v1.Trade;
 import ru.tinkoff.piapi.contract.v1.TradeSourceType;
 import ru.ttech.piapi.core.connector.streaming.listeners.OnNextListener;
@@ -42,7 +43,7 @@ public class SubscriptionService {
                 tradeWrapper.getQuantity());
     };
 
-    public CreateSubscriptionResponse subscribe(CreateSubscriptionRequest request) {
+    public SubscriptionResponse subscribe(CreateSubscriptionRequest request) {
         SubscriptionEntity entity = storageService.getOrCreate(request);
         // Сетевой стрим инициируется строго первым подписчиком (refCount == 1), повторные запросы только увеличивают счетчик в БД.
         if (entity.refCount() == 1) startStreamSubscription(entity);
@@ -70,7 +71,7 @@ public class SubscriptionService {
         ).whenComplete((result, error) -> handleBatchSubscriptionResult(targets, result, error));
     }
 
-    public CreateSubscriptionResponse unsubscribe(UUID id) {
+    public SubscriptionResponse unsubscribe(UUID id) {
         SubscriptionEntity entity = storageService.decrementRefCount(id);
         if (entity.refCount() <= 0) {
             var instrument = new Instrument(entity.symbol());
@@ -83,27 +84,17 @@ public class SubscriptionService {
         return mapper.toDto(entity);
     }
 
-    public CreateSubscriptionResponse restart(UUID id) {
+    public SubscriptionResponse restart(UUID id) {
         SubscriptionEntity entity = storageService.markRestarting(id);
         startStreamSubscription(entity);
         return mapper.toDto(entity);
     }
 
-    public void stop(UUID id) {
-        SubscriptionEntity entity = storageService.markStopped(id);
-        var instrument = new Instrument(entity.symbol());
-        marketDataStreamManager.unsubscribeTrades(
-                Set.of(instrument),
-                false,
-                TradeSourceType.TRADE_SOURCE_ALL
-        );
-    }
-
-    public CreateSubscriptionResponse findById(UUID id) {
+    public SubscriptionResponse findById(UUID id) {
         return mapper.toDto(storageService.findById(id));
     }
 
-    public List<CreateSubscriptionResponse> findAll(String exchange, String channel, Status status) {
+    public List<SubscriptionResponse> findAll(String exchange, String channel, Status status) {
         return storageService.findAll(exchange, channel, status)
                 .stream()
                 .map(mapper::toDto)

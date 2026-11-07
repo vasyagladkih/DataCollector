@@ -1,4 +1,4 @@
-package ru.datacollector.exceptions;
+package ru.datacollector.exception;
 
 import java.util.UUID;
 

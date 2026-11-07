@@ -1,4 +1,4 @@
-package ru.datacollector.exceptions;
+package ru.datacollector.exception;
 
 public class SymbolNotFoundException extends RuntimeException {
     public SymbolNotFoundException(String message) {

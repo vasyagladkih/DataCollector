@@ -6,7 +6,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public record CreateSubscriptionResponse(
+public record SubscriptionResponse(
         UUID id,
         String exchange,
         String channel,

@@ -1,4 +1,4 @@
-package ru.datacollector.persistance.entity;
+package ru.datacollector.repository.entity;
 
 import org.springframework.data.annotation.Id;
 import org.springframework.data.relational.core.mapping.Column;
@@ -40,20 +40,6 @@ public record SubscriptionEntity(
                 this.createdAt,
                 Instant.now(),
                 updatedRefCount
-        );
-    }
-
-    public SubscriptionEntity withTerminated() {
-        return new SubscriptionEntity(
-                this.id,
-                this.exchange,
-                this.channel,
-                this.symbol,
-                Status.TERMINATED,
-                null,
-                this.createdAt,
-                Instant.now(),
-                0
         );
     }
 
