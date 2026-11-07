@@ -21,7 +21,6 @@ import ru.ttech.piapi.core.impl.marketdata.wrapper.OpenInterestWrapper;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
@@ -86,6 +85,8 @@ public class DataCollectorMarketDataStreamManager
      * @param onOpenInterestListener  слушатель открытого интереса
      * @return фьючер с детальным результатом подписки от сервера биржи
      */
+    // TODO: Разделить recovery (батчевая подписка на коллекцию при рестарте) и live (единичная подписка на один инструмент),
+    //       чтобы исключить уязвимость контракта при передаче смешанного набора (уже подписанные + новые инструменты).
     public CompletableFuture<MarketDataSubscriptionResult> subscribeTradesAsync(
             Set<Instrument> instruments,
             TradeSourceType tradeSourceType,
@@ -104,13 +105,11 @@ public class DataCollectorMarketDataStreamManager
                 .filter(instrument -> !isSubscribedTrades(instrument))
                 .collect(Collectors.toUnmodifiableSet());
 
-        // Если инструмент уже был подписан ранее в этом стриме
         if (filteredInstruments.isEmpty()) {
             // TODO #25: Потенциальный ConcurrentModificationException при добавлении слушателя в несинхронизированный forEach воркера SDK
             addWrapperListener(context.getOnTradeListeners(), wrappedTradeListener);
             addWrapperListener(context.getOnOpenInterestListeners(), wrappedOpenInterestListener);
 
-            // Возвращаем успешный результат без дублирования сетевого запроса
             return CompletableFuture.completedFuture(new MarketDataSubscriptionResult(
                     RequestAction.SUBSCRIBE,
                     MarketDataResponseType.TRADE,
@@ -129,14 +128,16 @@ public class DataCollectorMarketDataStreamManager
                         SubscriptionAction.SUBSCRIPTION_ACTION_SUBSCRIBE
                 );
 
-        // Возвращаем фьючер, сохраняя регистрацию листенеров после подтверждения подписки
         return subscribe(MarketDataResponseType.TRADE, filteredInstruments, requestBuilder)
-                .whenComplete((subscriptionResult, throwable) -> Optional.ofNullable(subscriptionResult)
-                        .ifPresent(result -> {
-                            // TODO #25: Потенциальный ConcurrentModificationException при асинхронном добавлении слушателя из whenComplete
-                            addWrapperListener(context.getOnTradeListeners(), wrappedTradeListener);
-                            addWrapperListener(context.getOnOpenInterestListeners(), wrappedOpenInterestListener);
-                        })
-                );
+                .whenComplete((subscriptionResult, throwable) -> {
+                    if (throwable != null) {
+                        log.error("Ошибка при подписке на сделки для инструментов: {}", filteredInstruments, throwable);
+                        return;
+                    }
+                    if (subscriptionResult != null) {
+                        addWrapperListener(context.getOnTradeListeners(), wrappedTradeListener);
+                        addWrapperListener(context.getOnOpenInterestListeners(), wrappedOpenInterestListener);
+                    }
+                });
     }
 }

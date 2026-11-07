@@ -17,6 +17,12 @@ repositories {
     mavenCentral()
 }
 
+ext {
+    testcontainersVersion = '2.0.5'
+    tinkoffSdkVersion = '1.51'
+    flywayVersion = '13.12.1'
+}
+
 dependencies {
 
     implementation project(':common')
@@ -24,17 +30,30 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
     implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
-    compileOnly 'org.projectlombok:lombok'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+
     runtimeOnly 'org.postgresql:postgresql'
+
+    compileOnly 'org.projectlombok:lombok'
     annotationProcessor 'org.projectlombok:lombok'
+    testCompileOnly 'org.projectlombok:lombok'
+    testAnnotationProcessor 'org.projectlombok:lombok'
+
+    implementation "ru.tinkoff.piapi:java-sdk-spring-boot-starter:${tinkoffSdkVersion}"
+
     testImplementation 'org.springframework.boot:spring-boot-starter-data-jdbc-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
-    testCompileOnly 'org.projectlombok:lombok'
+    implementation("org.springframework.boot:spring-boot-starter-flyway")
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-    testAnnotationProcessor 'org.projectlombok:lombok'
 
-    implementation 'ru.tinkoff.piapi:java-sdk-spring-boot-starter:1.51'
+    testImplementation platform("org.testcontainers:testcontainers-bom:${testcontainersVersion}")
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+    testImplementation 'org.testcontainers:testcontainers-postgresql'
+
+    implementation("org.flywaydb:flyway-core:${flywayVersion}")
+    implementation("org.flywaydb:flyway-database-postgresql:${flywayVersion}")
 }
 
 tasks.named('test') {

@@ -6,12 +6,11 @@ import org.springframework.data.relational.core.mapping.Table;
 import ru.datacollector.model.Status;
 
 import java.time.Instant;
-import java.util.UUID;
 
 @Table("subscriptions")
 public record SubscriptionEntity(
         @Id
-        UUID id,
+        Long id,
         String exchange,
         @Column("channel")
         String channel,
@@ -51,20 +50,6 @@ public record SubscriptionEntity(
                 this.symbol,
                 Status.CONNECTING,
                 null,
-                this.createdAt,
-                Instant.now(),
-                this.refCount
-        );
-    }
-
-    public SubscriptionEntity withStatus(Status newStatus) {
-        return new SubscriptionEntity(
-                this.id,
-                this.exchange,
-                this.channel,
-                this.symbol,
-                newStatus,
-                this.errorMessage,
                 this.createdAt,
                 Instant.now(),
                 this.refCount

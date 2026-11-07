@@ -1,6 +1,7 @@
 package ru.datacollector.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.SubscriptionResponse;
@@ -20,9 +21,9 @@ import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
 
+@Slf4j
 @RequiredArgsConstructor
 @Service
 public class SubscriptionService {
@@ -30,14 +31,14 @@ public class SubscriptionService {
     private final SubscriptionStorageService storageService;
     private final SubscriptionMapper mapper;
     private final DataCollectorMarketDataStreamManager marketDataStreamManager;
-    private final OnNextListener<OpenInterestWrapper> openInterestStubListener = oi -> {};
+    private final OnNextListener<OpenInterestWrapper> openInterestStubListener = _ -> {};
 
     private final OnNextListener<TradeWrapper> tradeListener = tradeWrapper -> {
         Trade trade = tradeWrapper.getOriginal();
         String symbol = trade.getInstrumentUid();
 
         // TODO: Отправка сырых данных в Apache Kafka (задача #23)
-        System.out.printf("СДЕЛКА [%s]: цена %s, объем %d%n",
+        log.info("СДЕЛКА [{}]: цена {}, объем {}",
                 symbol,
                 tradeWrapper.getPrice(),
                 tradeWrapper.getQuantity());
@@ -45,7 +46,6 @@ public class SubscriptionService {
 
     public SubscriptionResponse subscribe(CreateSubscriptionRequest request) {
         SubscriptionEntity entity = storageService.getOrCreate(request);
-        // Сетевой стрим инициируется строго первым подписчиком (refCount == 1), повторные запросы только увеличивают счетчик в БД.
         if (entity.refCount() == 1) startStreamSubscription(entity);
         return mapper.toDto(entity);
     }
@@ -58,7 +58,7 @@ public class SubscriptionService {
     public void recover(List<SubscriptionEntity> entities) {
         Map<Instrument, SubscriptionEntity> targets = entities.stream()
                 .filter(e -> !marketDataStreamManager.isSubscribedTrades(new Instrument(e.symbol())))
-                .collect(Collectors.toMap(e -> new Instrument(e.symbol()), e -> e, (a, b) -> a));
+                .collect(Collectors.toMap(e -> new Instrument(e.symbol()), e -> e, (existing, _) -> existing));
 
         if (targets.isEmpty()) return;
 
@@ -71,7 +71,7 @@ public class SubscriptionService {
         ).whenComplete((result, error) -> handleBatchSubscriptionResult(targets, result, error));
     }
 
-    public SubscriptionResponse unsubscribe(UUID id) {
+    public SubscriptionResponse unsubscribe(Long id) {
         SubscriptionEntity entity = storageService.decrementRefCount(id);
         if (entity.refCount() <= 0) {
             var instrument = new Instrument(entity.symbol());
@@ -84,13 +84,13 @@ public class SubscriptionService {
         return mapper.toDto(entity);
     }
 
-    public SubscriptionResponse restart(UUID id) {
+    public SubscriptionResponse restart(Long id) {
         SubscriptionEntity entity = storageService.markRestarting(id);
         startStreamSubscription(entity);
         return mapper.toDto(entity);
     }
 
-    public SubscriptionResponse findById(UUID id) {
+    public SubscriptionResponse findById(Long id) {
         return mapper.toDto(storageService.findById(id));
     }
 

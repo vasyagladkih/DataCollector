@@ -18,7 +18,6 @@ import ru.datacollector.model.Status;
 import ru.datacollector.service.SubscriptionService;
 
 import java.util.List;
-import java.util.UUID;
 
 @RequiredArgsConstructor
 @RestController
@@ -37,7 +36,7 @@ public class SubscriptionController {
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<SubscriptionResponse> unsubscribe(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> unsubscribe(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionService.unsubscribe(id));
     }
 
@@ -56,12 +55,12 @@ public class SubscriptionController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<SubscriptionResponse> getById(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> getById(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionService.findById(id));
     }
 
     @PostMapping("/{id}/restart")
-    public ResponseEntity<SubscriptionResponse> restart(@PathVariable UUID id) {
+    public ResponseEntity<SubscriptionResponse> restart(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionService.restart(id));
     }
 }

@@ -11,7 +11,6 @@ import ru.datacollector.repository.SubscriptionRepository;
 import ru.datacollector.repository.entity.SubscriptionEntity;
 
 import java.util.List;
-import java.util.UUID;
 import java.util.function.UnaryOperator;
 
 @RequiredArgsConstructor
@@ -25,7 +24,7 @@ public class SubscriptionStorageService {
         return repository.upsertAndIncrement(request.exchange(), request.channel(), request.symbol());
     }
 
-    public SubscriptionEntity findById(UUID id) {
+    public SubscriptionEntity findById(Long id) {
         return repository.findById(id)
                 .orElseThrow(() -> new SubscriptionNotFoundException(id));
     }
@@ -41,7 +40,7 @@ public class SubscriptionStorageService {
         ));
     }
 
-    private SubscriptionEntity update(UUID id, UnaryOperator<SubscriptionEntity> updater) {
+    private SubscriptionEntity update(Long id, UnaryOperator<SubscriptionEntity> updater) {
         return repository.findByIdForUpdate(id)
                 .map(updater)
                 .map(repository::save)
@@ -49,7 +48,7 @@ public class SubscriptionStorageService {
     }
 
     @Transactional
-    public SubscriptionEntity markActive(UUID id) {
+    public SubscriptionEntity markActive(Long id) {
         return update(id, entity -> {
             if (entity.status() != Status.CONNECTING) return entity;
             return entity.withActive();
@@ -57,15 +56,15 @@ public class SubscriptionStorageService {
     }
 
     @Transactional
-    public SubscriptionEntity markFailed(UUID id, String message) {
+    public SubscriptionEntity markFailed(Long id, String message) {
         return update(id, entity -> {
-            if (entity.status() != Status.CONNECTING) return entity;
+            if (entity.status() != Status.CONNECTING && entity.status() != Status.ACTIVE) return entity;
             return entity.withFailed(message);
         });
     }
 
     @Transactional
-    public SubscriptionEntity markRestarting(UUID id) {
+    public SubscriptionEntity markRestarting(Long id) {
         return update(id, entity -> {
             if (entity.status() != Status.FAILED) {
                 throw new IllegalSubscriptionStateException(
@@ -77,7 +76,7 @@ public class SubscriptionStorageService {
     }
 
     @Transactional
-    public SubscriptionEntity decrementRefCount(UUID id) {
+    public SubscriptionEntity decrementRefCount(Long id) {
         return update(id, entity -> {
             if (entity.status() == Status.TERMINATED || entity.refCount() <= 0) {
                 throw new IllegalSubscriptionStateException(
@@ -86,10 +85,5 @@ public class SubscriptionStorageService {
             }
             return entity.withDecrementedRef();
         });
-    }
-
-    @Transactional
-    public SubscriptionEntity markStatus(UUID id, Status status) {
-        return update(id, entity -> entity.withStatus(status));
     }
 }
