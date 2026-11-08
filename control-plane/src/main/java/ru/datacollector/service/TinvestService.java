@@ -154,6 +154,7 @@ public class TinvestService {
         }
     }
 
+    // TODO вынести в маппер
     private InstrumentEntity toEntity(
             String uid,
             String ticker,

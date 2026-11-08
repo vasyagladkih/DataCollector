@@ -2,6 +2,7 @@ package ru.datacollector.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.SubscriptionResponse;
@@ -22,6 +23,7 @@ import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -29,25 +31,45 @@ import java.util.stream.Collectors;
 @Service
 public class SubscriptionService {
 
+    @Value("${kafka.topics.raw}")
+    private String rawTopic;
+
+    private final Map<String, String> partitionKeyCache = new ConcurrentHashMap<>();
+
+    private final KafkaDataProducerService kafkaProducer;
     private final SubscriptionStorageService storageService;
     private final SubscriptionMapper mapper;
     private final DataCollectorMarketDataStreamManager marketDataStreamManager;
     private final TinvestService tinvestService;
     private static final OnNextListener<OpenInterestWrapper> openInterestStubListener = _ -> {};
 
-    private final OnNextListener<TradeWrapper> tradeListener = tradeWrapper -> {
-        Trade trade = tradeWrapper.getOriginal();
-        String symbol = trade.getInstrumentUid();
+    private final OnNextListener<TradeWrapper> tradeListener = this::onTrade;
 
-        // TODO: Отправка сырых данных в Apache Kafka (задача #23)
-        log.info("СДЕЛКА [{}]: цена {}, объем {}",
-                symbol,
-                tradeWrapper.getPrice(),
-                tradeWrapper.getQuantity());
-    };
+    private void onTrade(TradeWrapper tradeWrapper) {
+        Trade trade = tradeWrapper.getOriginal();
+        String uid = trade.getInstrumentUid();
+        String partitionKey = partitionKeyCache.computeIfAbsent(uid, _ ->
+                buildPartitionKey(trade.getClassCode(), trade.getTicker())
+        );
+        kafkaProducer.send(rawTopic, partitionKey, trade.toByteArray());
+    }
+
+    private String buildPartitionKey(String classCode, String ticker) {
+        return resolveExchange(classCode) + ":TRADE:" + ticker;
+    }
+
+    private String resolveExchange(String classCode) {
+        if (classCode == null || classCode.isBlank()) return "UNKNOWN";
+        if ("SPBFUT".equals(classCode) || classCode.startsWith("TQ") || "CETS".equals(classCode)) return "MOEX";
+        if (classCode.startsWith("SPB") || classCode.startsWith("SPHK")) return "SPB";
+        return "UNKNOWN";
+    }
 
     public SubscriptionResponse subscribe(CreateSubscriptionRequest request) {
         InstrumentEntity instrument = tinvestService.resolve(request.symbol());
+
+        partitionKeyCache.putIfAbsent(instrument.instrumentUid(), buildPartitionKey(instrument.classCode(), instrument.ticker()));
+
         CreateSubscriptionRequest targetRequest = new CreateSubscriptionRequest(
                 request.exchange(),
                 instrument.instrumentUid(),
@@ -70,6 +92,15 @@ public class SubscriptionService {
 
         if (targets.isEmpty()) return;
 
+        for (SubscriptionEntity entity : targets.values()) {
+            try {
+                InstrumentEntity inst = tinvestService.resolve(entity.symbol());
+                partitionKeyCache.putIfAbsent(inst.instrumentUid(), buildPartitionKey(inst.classCode(), inst.ticker()));
+            } catch (Exception e) {
+                log.warn("Не удалось восстановить ключ партиционирования для {}: {}", entity.symbol(), e.getMessage());
+            }
+        }
+
         marketDataStreamManager.subscribeTradesBatchAsync(
                 targets.keySet(),
                 TradeSourceType.TRADE_SOURCE_ALL,
@@ -88,12 +119,19 @@ public class SubscriptionService {
                     false,
                     TradeSourceType.TRADE_SOURCE_ALL
             );
+            partitionKeyCache.remove(entity.symbol());
         }
         return mapper.toDto(entity);
     }
 
     public SubscriptionResponse restart(Long id) {
         SubscriptionEntity entity = storageService.markRestarting(id);
+        try {
+            InstrumentEntity inst = tinvestService.resolve(entity.symbol());
+            partitionKeyCache.putIfAbsent(inst.instrumentUid(), buildPartitionKey(inst.classCode(), inst.ticker()));
+        } catch (Exception e) {
+            log.warn("Не удалось восстановить ключ партиционирования для {}: {}", entity.symbol(), e.getMessage());
+        }
         startStreamSubscription(entity);
         return mapper.toDto(entity);
     }

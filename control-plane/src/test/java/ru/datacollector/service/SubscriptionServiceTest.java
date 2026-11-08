@@ -67,6 +67,9 @@ class SubscriptionServiceTest {
     private static final String REJECTED_BY_EXCHANGE = "Subscription rejected by exchange";
 
     @Mock
+    private KafkaDataProducerService kafkaProducer;
+
+    @Mock
     private SubscriptionStorageService storageService;
 
     @Mock
@@ -609,11 +612,11 @@ class SubscriptionServiceTest {
         Trade trade = Trade.newBuilder().setInstrumentUid(SYMBOL).build();
         TradeWrapper tradeWrapper = mock(TradeWrapper.class);
         when(tradeWrapper.getOriginal()).thenReturn(trade);
-        when(tradeWrapper.getPrice()).thenReturn(java.math.BigDecimal.valueOf(100.0));
-        when(tradeWrapper.getQuantity()).thenReturn(10L);
 
         tradeCaptor.getValue().onNext(tradeWrapper);
         oiCaptor.getValue().onNext(mock(OpenInterestWrapper.class));
+
+        verify(kafkaProducer).send(any(), eq("MOEX:TRADE:BBG004730N88"), eq(trade.toByteArray()));
     }
 
     @Test
@@ -721,5 +724,42 @@ class SubscriptionServiceTest {
         verify(tinvestService).resolve(ticker);
         verifyNoInteractions(marketDataStreamManager);
         verify(storageService, never()).getOrCreate(any());
+    }
+
+    // =========================================================================
+    // Группа 8: Kafka Raw Data Publishing & Partition Key
+    // =========================================================================
+
+    @Test
+    @DisplayName("24. onTrade: корректно определяет биржу (MOEX/SPB/UNKNOWN) и отправляет сырой protobuf в Kafka")
+    void onTrade_correctlyResolvesExchangeAndPublishesToKafka() {
+        var tradeMoex = Trade.newBuilder().setInstrumentUid("uid-moex").setClassCode("TQBR").setTicker("SBER").build();
+        var tradeSpb = Trade.newBuilder().setInstrumentUid("uid-spb").setClassCode("SPBXM").setTicker("DIOD").build();
+        var tradeUnknown = Trade.newBuilder().setInstrumentUid("uid-unk").setClassCode("XYZ").setTicker("TEST").build();
+
+        var wrapperMoex = mock(TradeWrapper.class);
+        var wrapperSpb = mock(TradeWrapper.class);
+        var wrapperUnknown = mock(TradeWrapper.class);
+
+        when(wrapperMoex.getOriginal()).thenReturn(tradeMoex);
+        when(wrapperSpb.getOriginal()).thenReturn(tradeSpb);
+        when(wrapperUnknown.getOriginal()).thenReturn(tradeUnknown);
+
+        ArgumentCaptor<OnNextListener<TradeWrapper>> captor = ArgumentCaptor.captor();
+        when(storageService.getOrCreate(any())).thenReturn(createEntity(Status.ACTIVE, 1));
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(SubscriptionStatus.OK));
+
+        subscriptionService.subscribe(new CreateSubscriptionRequest(EXCHANGE, SYMBOL, CHANNEL));
+        verify(marketDataStreamManager).subscribeTradeAsync(any(), any(), anyBoolean(), captor.capture(), any());
+
+        OnNextListener<TradeWrapper> listener = captor.getValue();
+        listener.onNext(wrapperMoex);
+        listener.onNext(wrapperSpb);
+        listener.onNext(wrapperUnknown);
+
+        verify(kafkaProducer).send(any(), eq("MOEX:TRADE:SBER"), eq(tradeMoex.toByteArray()));
+        verify(kafkaProducer).send(any(), eq("SPB:TRADE:DIOD"), eq(tradeSpb.toByteArray()));
+        verify(kafkaProducer).send(any(), eq("UNKNOWN:TRADE:TEST"), eq(tradeUnknown.toByteArray()));
     }
 }
