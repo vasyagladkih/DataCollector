@@ -22,6 +22,7 @@ import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
 
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -133,10 +134,13 @@ public class DataCollectorMarketDataStreamManager
                     }
                 })
                 .thenApply(result -> {
-                    if (result != null && result.getSubscriptionStatusMap() != null) {
-                        return result.getSubscriptionStatusMap().getOrDefault(instrument, SubscriptionStatus.ERROR);
-                    }
-                    return SubscriptionStatus.ERROR;
+                    if (result == null || result.getSubscriptionStatusMap() == null) return SubscriptionStatus.ERROR;
+
+                    return result.getSubscriptionStatusMap().entrySet().stream()
+                            .filter(entry -> entry.getKey().sharesIdWith(instrument))
+                            .map(Map.Entry::getValue)
+                            .findFirst()
+                            .orElse(SubscriptionStatus.ERROR);
                 });
     }
 
@@ -221,6 +225,21 @@ public class DataCollectorMarketDataStreamManager
                             fullStatusMap
                     );
                 });
+    }
+
+    @Override
+    public void unsubscribeTrades(
+            Set<Instrument> instruments,
+            boolean withOpenInterest,
+            TradeSourceType tradeSourceType
+    ) {
+        super.unsubscribeTrades(instruments, withOpenInterest, tradeSourceType);
+        if (instruments != null && !instruments.isEmpty()) {
+            activeTradeInstruments.removeIf(active -> instruments.stream().anyMatch(active::sharesIdWith));
+            if (withOpenInterest) {
+                activeOiInstruments.removeIf(active -> instruments.stream().anyMatch(active::sharesIdWith));
+            }
+        }
     }
 
     private void registerTradeListenerIfAbsent(Set<Instrument> instruments, OnNextListener<TradeWrapper> listener) {

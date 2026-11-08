@@ -131,7 +131,14 @@ public class SubscriptionService {
 
         var statusMap = (result != null) ? result.getSubscriptionStatusMap() : Map.<Instrument, SubscriptionStatus>of();
         targets.forEach((instrument, entity) -> {
-            if (statusMap.get(instrument) == SubscriptionStatus.OK) {
+
+            SubscriptionStatus status = statusMap.entrySet().stream()
+                    .filter(entry -> entry.getKey().sharesIdWith(instrument))
+                    .map(Map.Entry::getValue)
+                    .findFirst()
+                    .orElse(SubscriptionStatus.ERROR);
+
+            if (status == SubscriptionStatus.OK) {
                 storageService.markActive(entity.id());
             } else {
                 storageService.markFailed(entity.id(), "Subscription rejected by exchange");

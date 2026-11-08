@@ -21,6 +21,8 @@ ext {
     testcontainersVersion = '2.0.5'
     tinkoffSdkVersion = '1.51'
     flywayVersion = '13.12.1'
+    mapstructVersion = '1.6.3'
+    lombokMapstructBindingVersion = '0.2.0'
 }
 
 dependencies {
@@ -28,16 +30,23 @@ dependencies {
     implementation project(':common')
 
     implementation 'org.springframework.boot:spring-boot-starter-data-jdbc'
-    implementation 'org.springframework.boot:spring-boot-starter-security'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-kafka'
 
     runtimeOnly 'org.postgresql:postgresql'
 
+    implementation "org.mapstruct:mapstruct:${mapstructVersion}"
     compileOnly 'org.projectlombok:lombok'
-    annotationProcessor 'org.projectlombok:lombok'
     testCompileOnly 'org.projectlombok:lombok'
+
+    annotationProcessor 'org.projectlombok:lombok'
+    annotationProcessor "org.projectlombok:lombok-mapstruct-binding:${lombokMapstructBindingVersion}"
+    annotationProcessor "org.mapstruct:mapstruct-processor:${mapstructVersion}"
+
     testAnnotationProcessor 'org.projectlombok:lombok'
+    testAnnotationProcessor "org.projectlombok:lombok-mapstruct-binding:${lombokMapstructBindingVersion}"
+    testAnnotationProcessor "org.mapstruct:mapstruct-processor:${mapstructVersion}"
 
     implementation "ru.tinkoff.piapi:java-sdk-spring-boot-starter:${tinkoffSdkVersion}"
 

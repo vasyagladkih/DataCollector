@@ -1,4 +1,21 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: datacollector-postgres
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-datacollector}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-datacollector}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   kafka:
     image: apache/kafka:3.9.1
     container_name: connector-kafka
@@ -38,25 +55,25 @@ services:
       kafka:
         condition: service_healthy
 
-  connector-app:
+  control-plane:
     build:
-      context: data-ingestor
-      dockerfile: data-ingestor/Dockerfile
-    container_name: connector-gateway
+      context: .
+      dockerfile: control-plane/Dockerfile
+    container_name: datacollector-control-plane
     ports:
-      - "5556:5556"
+      - "${SERVER_PORT:-8081}:${SERVER_PORT:-8081}"
     environment:
-      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
-      JAVA_TOOL_OPTIONS: "-Xms64M -Xmx128M -Xss256k -XX:MaxMetaspaceSize=128M -XX:ReservedCodeCacheSize=32M"
-      SERVER_PORT: 5556
-      KAFKA_GROUP_INSTANCE_ID: "connector-node-1"
-    restart: on-failure
+      SERVER_PORT: ${SERVER_PORT:-8081}
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-datacollector}
+      DB_USERNAME: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      INVEST_TOKEN: ${INVEST_TOKEN:-t.fake_token_for_tests}
     depends_on:
+      postgres:
+        condition: service_healthy
       kafka:
         condition: service_healthy
-    develop:
-      watch:
-        - action: rebuild
-          path: data-ingestor/src
-        - action: rebuild
-          path: data-ingestor/build.gradle
+
+volumes:
+  postgres-data:

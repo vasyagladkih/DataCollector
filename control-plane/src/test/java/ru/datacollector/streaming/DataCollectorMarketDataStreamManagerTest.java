@@ -7,8 +7,10 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import ru.tinkoff.piapi.contract.v1.MarketDataRequest;
+import ru.tinkoff.piapi.contract.v1.SubscribeTradesResponse;
 import ru.tinkoff.piapi.contract.v1.Trade;
 import ru.tinkoff.piapi.contract.v1.TradeSourceType;
+import ru.tinkoff.piapi.contract.v1.TradeSubscription;
 import ru.ttech.piapi.core.connector.ConnectorConfiguration;
 import ru.ttech.piapi.core.connector.ServiceStubFactory;
 import ru.ttech.piapi.core.connector.streaming.StreamServiceStubFactory;
@@ -17,6 +19,7 @@ import ru.ttech.piapi.core.impl.marketdata.MarketDataResponseType;
 import ru.ttech.piapi.core.impl.marketdata.subscription.Instrument;
 import ru.ttech.piapi.core.impl.marketdata.subscription.MarketDataSubscriptionResult;
 import ru.ttech.piapi.core.impl.marketdata.subscription.RequestAction;
+import ru.ttech.piapi.core.impl.marketdata.subscription.SubscriptionResultMapper;
 import ru.ttech.piapi.core.impl.marketdata.subscription.SubscriptionStatus;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.OpenInterestWrapper;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
@@ -38,6 +41,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
@@ -386,17 +390,21 @@ class DataCollectorMarketDataStreamManagerTest {
     }
 
     @Test
-    @DisplayName("11. subscribeTradeAsync: для нового инструмента запрашивает стрим и возвращает статус биржи")
+    @DisplayName("11. subscribeTradeAsync: для нового инструмента запрашивает стрим и сопоставляет контрактный ответ SDK через sharesIdWith")
     void subscribeTradeAsync_whenNewInstrument_shouldReturnStatusFromNetwork() {
         var spyManager = spy(manager);
         doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT);
 
-        var mockResult = new MarketDataSubscriptionResult(
-                RequestAction.SUBSCRIBE,
-                MarketDataResponseType.TRADE,
-                Map.of(INSTRUMENT, SubscriptionStatus.OK)
-        );
-        doReturn(CompletableFuture.completedFuture(mockResult))
+        var realisticResult = SubscriptionResultMapper.map(SubscribeTradesResponse.newBuilder()
+                .addTradeSubscriptions(TradeSubscription.newBuilder()
+                        .setFigi(FIGI)
+                        .setInstrumentUid("test-uid-456")
+                        .setTicker("SBER")
+                        .setClassCode("TQBR")
+                        .setSubscriptionStatus(ru.tinkoff.piapi.contract.v1.SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS)
+                        .build())
+                .build());
+        doReturn(CompletableFuture.completedFuture(realisticResult))
                 .when(spyManager).subscribe(any(), any(), any());
 
         CompletableFuture<SubscriptionStatus> future = spyManager.subscribeTradeAsync(
@@ -471,6 +479,62 @@ class DataCollectorMarketDataStreamManagerTest {
         ));
         assertThat(spyManager.getTradeListeners()).hasSize(1);
         assertThat(spyManager.getOpenInterestListeners()).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("14. tradeSubscription: полный цикл рециклинга (subscribe -> unsubscribeTrades -> resubscribe) повторно регистрирует слушателя")
+    void tradeSubscription_fullLifecycle_subscribeUnsubscribeResubscribe_shouldReRegisterListeners() {
+        var spyManager = spy(manager);
+        doReturn(false).when(spyManager).isSubscribedTrades(INSTRUMENT);
+
+        var realisticResult = SubscriptionResultMapper.map(SubscribeTradesResponse.newBuilder()
+                .addTradeSubscriptions(TradeSubscription.newBuilder()
+                        .setFigi(FIGI)
+                        .setInstrumentUid("test-uid-456")
+                        .setTicker("SBER")
+                        .setClassCode("TQBR")
+                        .setSubscriptionStatus(ru.tinkoff.piapi.contract.v1.SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS)
+                        .build())
+                .build());
+        doReturn(CompletableFuture.completedFuture(realisticResult))
+                .when(spyManager).subscribe(any(), any(), any());
+
+        CompletableFuture<SubscriptionStatus> firstFuture = spyManager.subscribeTradeAsync(
+                INSTRUMENT,
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+        assertThat(firstFuture).isCompleted();
+        assertThat(firstFuture.join()).isEqualTo(SubscriptionStatus.OK);
+        assertThat(spyManager.getTradeListeners()).hasSize(1);
+
+        spyManager.unsubscribeTrades(Set.of(INSTRUMENT), false, TradeSourceType.TRADE_SOURCE_ALL);
+
+        CompletableFuture<SubscriptionStatus> secondFuture = spyManager.subscribeTradeAsync(
+                INSTRUMENT,
+                TradeSourceType.TRADE_SOURCE_ALL,
+                false,
+                NOOP_TRADE_LISTENER,
+                NOOP_OI_LISTENER
+        );
+        assertThat(secondFuture).isCompleted();
+        assertThat(secondFuture.join()).isEqualTo(SubscriptionStatus.OK);
+        assertThat(spyManager.getTradeListeners())
+                .as("После отписки и повторной подписки слушатель обязан зарегистрироваться в контексте воркера заново")
+                .hasSize(2);
+    }
+
+    @Test
+    @DisplayName("15. unsubscribeTrades: отписка несуществующего инструмента не вызывает ошибок и сохраняет целостность")
+    void unsubscribeTrades_whenInstrumentNotActive_shouldNotThrowException() {
+        var spyManager = spy(manager);
+        assertThatCode(() -> spyManager.unsubscribeTrades(
+                Set.of(new Instrument("NON_EXISTING")),
+                false,
+                TradeSourceType.TRADE_SOURCE_ALL
+        )).doesNotThrowAnyException();
     }
 
     /**

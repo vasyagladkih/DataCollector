@@ -14,13 +14,16 @@ import ru.datacollector.mapper.SubscriptionMapper;
 import ru.datacollector.model.Status;
 import ru.datacollector.repository.entity.SubscriptionEntity;
 import ru.datacollector.streaming.DataCollectorMarketDataStreamManager;
+import ru.tinkoff.piapi.contract.v1.SubscribeTradesResponse;
 import ru.tinkoff.piapi.contract.v1.Trade;
 import ru.tinkoff.piapi.contract.v1.TradeSourceType;
+import ru.tinkoff.piapi.contract.v1.TradeSubscription;
 import ru.ttech.piapi.core.connector.streaming.listeners.OnNextListener;
 import ru.ttech.piapi.core.impl.marketdata.MarketDataResponseType;
 import ru.ttech.piapi.core.impl.marketdata.subscription.Instrument;
 import ru.ttech.piapi.core.impl.marketdata.subscription.MarketDataSubscriptionResult;
 import ru.ttech.piapi.core.impl.marketdata.subscription.RequestAction;
+import ru.ttech.piapi.core.impl.marketdata.subscription.SubscriptionResultMapper;
 import ru.ttech.piapi.core.impl.marketdata.subscription.SubscriptionStatus;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.OpenInterestWrapper;
 import ru.ttech.piapi.core.impl.marketdata.wrapper.TradeWrapper;
@@ -38,6 +41,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
@@ -261,9 +265,9 @@ class SubscriptionServiceTest {
         verify(storageService).decrementRefCount(TEST_ID);
         verify(mapper).toDto(entity);
         verify(marketDataStreamManager).unsubscribeTrades(
-                eq(Set.of(INSTRUMENT)),
-                eq(false),
-                eq(TradeSourceType.TRADE_SOURCE_ALL)
+                Set.of(INSTRUMENT),
+                false,
+                TradeSourceType.TRADE_SOURCE_ALL
         );
         verifyNoMoreInteractions(storageService, mapper, marketDataStreamManager);
     }
@@ -351,16 +355,24 @@ class SubscriptionServiceTest {
 
         when(marketDataStreamManager.isSubscribedTrades(any())).thenReturn(false);
 
-        var mockResult = new MarketDataSubscriptionResult(
-                RequestAction.SUBSCRIBE,
-                MarketDataResponseType.TRADE,
-                Map.of(
-                        INSTRUMENT, SubscriptionStatus.OK,
-                        INSTRUMENT_2, SubscriptionStatus.OK
-                )
-        );
+        var realisticResult = SubscriptionResultMapper.map(SubscribeTradesResponse.newBuilder()
+                .addTradeSubscriptions(TradeSubscription.newBuilder()
+                        .setFigi(SYMBOL)
+                        .setInstrumentUid("test-uid-1")
+                        .setTicker("SBER")
+                        .setClassCode("TQBR")
+                        .setSubscriptionStatus(ru.tinkoff.piapi.contract.v1.SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS)
+                        .build())
+                .addTradeSubscriptions(TradeSubscription.newBuilder()
+                        .setFigi(SYMBOL_2)
+                        .setInstrumentUid("test-uid-2")
+                        .setTicker("GAZP")
+                        .setClassCode("TQBR")
+                        .setSubscriptionStatus(ru.tinkoff.piapi.contract.v1.SubscriptionStatus.SUBSCRIPTION_STATUS_SUCCESS)
+                        .build())
+                .build());
         when(marketDataStreamManager.subscribeTradesBatchAsync(any(), any(), anyBoolean(), any(), any()))
-                .thenReturn(CompletableFuture.completedFuture(mockResult));
+                .thenReturn(CompletableFuture.completedFuture(realisticResult));
 
         subscriptionService.recover(List.of(entity1, entity2));
 
@@ -574,8 +586,33 @@ class SubscriptionServiceTest {
         when(tradeWrapper.getPrice()).thenReturn(java.math.BigDecimal.valueOf(100.0));
         when(tradeWrapper.getQuantity()).thenReturn(10L);
 
-        // Проверяем вызов слушателей на отсутствие непредвиденных NullPointerException и исключений
         tradeCaptor.getValue().onNext(tradeWrapper);
         oiCaptor.getValue().onNext(mock(OpenInterestWrapper.class));
+    }
+
+    @Test
+    @DisplayName("21. subscribe: после полной отписки (TERMINATED) повторный запрос успешно поднимает подписку в ACTIVE")
+    void subscribe_afterUnsubscribe_successfullyReactivatesStream() {
+        var request = new CreateSubscriptionRequest(EXCHANGE, SYMBOL, CHANNEL);
+        SubscriptionEntity activeEntity = createEntity(Status.ACTIVE, 1);
+        SubscriptionEntity terminatedEntity = createEntity(Status.TERMINATED, 0);
+        SubscriptionEntity connectingEntity = createEntity(Status.CONNECTING, 1);
+
+        when(storageService.getOrCreate(request)).thenReturn(activeEntity);
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(CompletableFuture.completedFuture(SubscriptionStatus.OK));
+
+        subscriptionService.subscribe(request);
+        verify(storageService).markActive(TEST_ID);
+
+        when(storageService.decrementRefCount(TEST_ID)).thenReturn(terminatedEntity);
+        subscriptionService.unsubscribe(TEST_ID);
+        verify(marketDataStreamManager).unsubscribeTrades(Set.of(INSTRUMENT), false, TradeSourceType.TRADE_SOURCE_ALL);
+
+        when(storageService.getOrCreate(request)).thenReturn(connectingEntity);
+        subscriptionService.subscribe(request);
+
+        verify(storageService, times(2)).markActive(TEST_ID);
+        verify(storageService, never()).markFailed(any(), any());
     }
 }
