@@ -1,7 +1,0 @@
-{
-  "id": "2",
-  "action": "subscribe",
-  "channel": "trade",
-  "tradeType": "spot",
-  "symbol": "ETH-USDT"
-}

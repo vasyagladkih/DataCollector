@@ -1,6 +1,6 @@
 plugins {
     id 'java-library'
-    id 'io.openapiprocessor.openapi-processor' version '2026.2'
+    alias(libs.plugins.openapi.processor)
 }
 
 group = 'ru'
@@ -17,16 +17,18 @@ repositories {
 }
 
 dependencies {
-    api platform('org.springframework.boot:spring-boot-dependencies:4.1.1')
+    api platform(libs.spring.boot.dependencies)
     api 'org.springframework:spring-web'
     api 'org.springframework:spring-context'
     api 'jakarta.validation:jakarta.validation-api'
     api 'com.fasterxml.jackson.core:jackson-annotations'
-    api 'org.jspecify:jspecify:1.0.0'
-    api 'org.mapstruct:mapstruct:1.6.3'
-    annotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+    api libs.jspecify
+    api libs.mapstruct
+    annotationProcessor libs.mapstruct.processor
 
-    compileOnly 'jakarta.annotation:jakarta.annotation-api:3.0.0'
+    api libs.tinkoff.sdk.contract
+
+    compileOnly libs.jakarta.annotation.api
 
     testImplementation platform('org.junit:junit-bom:6.0.0')
     testImplementation 'org.junit.jupiter:junit-jupiter'
@@ -41,7 +43,7 @@ openapiProcessor {
     apiPath layout.projectDirectory.file("src/main/resources/openapi.yaml")
 
     spring {
-        processor "io.openapiprocessor:openapi-processor-spring:2026.3.2"
+        processor "${libs.openapi.processor.spring.get()}"
         targetDir layout.buildDirectory.dir("generated/src/main/java")
         mapping layout.projectDirectory.file("src/main/resources/mapping.yaml")
     }

@@ -1,8 +1,0 @@
-{
-  "exchange": "BINANCE",
-  "market": "SPOT",
-  "symbol": "BTC-USDT",
-  "command": {
-    "type": "trades"
-  }
-}

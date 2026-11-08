@@ -5,6 +5,7 @@ COPY gradlew settings.gradle build.gradle ./
 COPY gradle ./gradle
 COPY common ./common
 COPY control-plane ./control-plane
+COPY data-ingestor ./data-ingestor
 
 RUN chmod +x ./gradlew && ./gradlew :control-plane:bootJar --no-daemon -x test
 

@@ -1,8 +1,0 @@
-{
-  "exchange": "KUCOIN",
-  "market": "FUTURES",
-  "symbol": "ETH-USDT",
-  "command": {
-    "type": "trades"
-  }
-}

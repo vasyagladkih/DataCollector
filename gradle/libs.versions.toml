@@ -1,0 +1,33 @@
+[versions]
+springBoot = "4.1.1"
+springDependencyManagement = "1.1.7"
+tinkoffSdk = "1.51"
+flyway = "13.12.1"
+mapstruct = "1.6.3"
+lombokMapstructBinding = "0.2.0"
+testcontainers = "2.0.5"
+jspecify = "1.0.0"
+jakartaAnnotation = "3.0.0"
+openapiProcessor = "2026.2"
+openapiProcessorSpring = "2026.3.2"
+sonarqube = "7.5.0.8588"
+
+[libraries]
+spring-boot-dependencies = { module = "org.springframework.boot:spring-boot-dependencies", version.ref = "springBoot" }
+tinkoff-sdk-contract = { module = "ru.tinkoff.piapi:java-sdk-grpc-contract", version.ref = "tinkoffSdk" }
+tinkoff-sdk-starter = { module = "ru.tinkoff.piapi:java-sdk-spring-boot-starter", version.ref = "tinkoffSdk" }
+flyway-core = { module = "org.flywaydb:flyway-core", version.ref = "flyway" }
+flyway-database-postgresql = { module = "org.flywaydb:flyway-database-postgresql", version.ref = "flyway" }
+mapstruct = { module = "org.mapstruct:mapstruct", version.ref = "mapstruct" }
+mapstruct-processor = { module = "org.mapstruct:mapstruct-processor", version.ref = "mapstruct" }
+lombok-mapstruct-binding = { module = "org.projectlombok:lombok-mapstruct-binding", version.ref = "lombokMapstructBinding" }
+jspecify = { module = "org.jspecify:jspecify", version.ref = "jspecify" }
+jakarta-annotation-api = { module = "jakarta.annotation:jakarta.annotation-api", version.ref = "jakartaAnnotation" }
+openapi-processor-spring = { module = "io.openapiprocessor:openapi-processor-spring", version.ref = "openapiProcessorSpring" }
+testcontainers-bom = { module = "org.testcontainers:testcontainers-bom", version.ref = "testcontainers" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+sonarqube = { id = "org.sonarqube", version.ref = "sonarqube" }
+openapi-processor = { id = "io.openapiprocessor.openapi-processor", version.ref = "openapiProcessor" }

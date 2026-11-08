@@ -1,7 +1,0 @@
-{
-  "id": "3",
-  "action": "subscribe",
-  "channel": "trade",
-  "tradeType": "spot",
-  "symbol": "SOL-USDT"
-}

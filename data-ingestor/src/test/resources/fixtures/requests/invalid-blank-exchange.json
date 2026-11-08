@@ -1,8 +1,0 @@
-{
-  "exchange": "",
-  "market": "SPOT",
-  "symbol": "BTC-USDT",
-  "command": {
-    "type": "trades"
-  }
-}
