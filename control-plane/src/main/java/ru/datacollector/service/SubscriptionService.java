@@ -7,6 +7,7 @@ import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.SubscriptionResponse;
 import ru.datacollector.mapper.SubscriptionMapper;
 import ru.datacollector.model.Status;
+import ru.datacollector.repository.entity.InstrumentEntity;
 import ru.datacollector.repository.entity.SubscriptionEntity;
 import ru.datacollector.streaming.DataCollectorMarketDataStreamManager;
 import ru.tinkoff.piapi.contract.v1.Trade;
@@ -31,6 +32,7 @@ public class SubscriptionService {
     private final SubscriptionStorageService storageService;
     private final SubscriptionMapper mapper;
     private final DataCollectorMarketDataStreamManager marketDataStreamManager;
+    private final TinvestService tinvestService;
     private static final OnNextListener<OpenInterestWrapper> openInterestStubListener = _ -> {};
 
     private final OnNextListener<TradeWrapper> tradeListener = tradeWrapper -> {
@@ -45,7 +47,13 @@ public class SubscriptionService {
     };
 
     public SubscriptionResponse subscribe(CreateSubscriptionRequest request) {
-        SubscriptionEntity entity = storageService.getOrCreate(request);
+        InstrumentEntity instrument = tinvestService.resolve(request.symbol());
+        CreateSubscriptionRequest targetRequest = new CreateSubscriptionRequest(
+                request.exchange(),
+                instrument.instrumentUid(),
+                request.channel()
+        );
+        SubscriptionEntity entity = storageService.getOrCreate(targetRequest);
         if (entity.refCount() == 1) startStreamSubscription(entity);
         return mapper.toDto(entity);
     }

@@ -1,5 +1,6 @@
 package ru.datacollector.service;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -10,8 +11,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.SubscriptionResponse;
 import ru.datacollector.exception.IllegalSubscriptionStateException;
+import ru.datacollector.exception.SymbolNotFoundException;
 import ru.datacollector.mapper.SubscriptionMapper;
 import ru.datacollector.model.Status;
+import ru.datacollector.repository.entity.InstrumentEntity;
 import ru.datacollector.repository.entity.SubscriptionEntity;
 import ru.datacollector.streaming.DataCollectorMarketDataStreamManager;
 import ru.tinkoff.piapi.contract.v1.SubscribeTradesResponse;
@@ -39,10 +42,12 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
@@ -70,8 +75,29 @@ class SubscriptionServiceTest {
     @Mock
     private DataCollectorMarketDataStreamManager marketDataStreamManager;
 
+    @Mock
+    private TinvestService tinvestService;
+
     @InjectMocks
     private SubscriptionService subscriptionService;
+
+    @BeforeEach
+    void setUp() {
+        lenient().when(tinvestService.resolve(any())).thenAnswer(invocation -> {
+            String symbol = invocation.getArgument(0);
+            return new InstrumentEntity(
+                    symbol,
+                    symbol,
+                    "TQBR",
+                    "share",
+                    "Test",
+                    1,
+                    "RUB",
+                    true,
+                    TEST_TIMESTAMP
+            );
+        });
+    }
 
     private SubscriptionEntity createEntity(Status status, int refCount) {
         return new SubscriptionEntity(
@@ -614,5 +640,86 @@ class SubscriptionServiceTest {
 
         verify(storageService, times(2)).markActive(TEST_ID);
         verify(storageService, never()).markFailed(any(), any());
+    }
+
+    // =========================================================================
+    // Группа 7: Резолв инструментов через TinvestService
+    // =========================================================================
+
+    @Test
+    @DisplayName("22. subscribe: при создании подписки с тикером SBER резолвит символ через tinvestService.resolve() и передает UID в стрим и хранилище")
+    void subscribe_whenTickerProvided_resolvesSymbolAndPassesUidToStreamManagerAndStorage() {
+        String ticker = "SBER";
+        String uid = "uid-sber-999";
+        var request = new CreateSubscriptionRequest(EXCHANGE, ticker, CHANNEL);
+        var expectedStorageRequest = new CreateSubscriptionRequest(EXCHANGE, uid, CHANNEL);
+        var entity = new SubscriptionEntity(
+                TEST_ID,
+                EXCHANGE,
+                CHANNEL,
+                uid,
+                Status.CONNECTING,
+                null,
+                TEST_TIMESTAMP,
+                TEST_TIMESTAMP,
+                1
+        );
+        var expectedResponse = new SubscriptionResponse(
+                TEST_ID,
+                EXCHANGE,
+                CHANNEL,
+                uid,
+                Status.CONNECTING.name(),
+                null,
+                TEST_TIMESTAMP,
+                TEST_TIMESTAMP
+        );
+        var resolved = new InstrumentEntity(
+                uid,
+                ticker,
+                "TQBR",
+                "share",
+                "Сбербанк",
+                10,
+                "RUB",
+                true,
+                TEST_TIMESTAMP
+        );
+
+        when(tinvestService.resolve(ticker)).thenReturn(resolved);
+        when(storageService.getOrCreate(expectedStorageRequest)).thenReturn(entity);
+        when(mapper.toDto(entity)).thenReturn(expectedResponse);
+        when(marketDataStreamManager.subscribeTradeAsync(any(), any(), anyBoolean(), any(), any()))
+                .thenReturn(new CompletableFuture<>());
+
+        SubscriptionResponse actual = subscriptionService.subscribe(request);
+
+        assertThat(actual).isEqualTo(expectedResponse);
+        verify(tinvestService).resolve(ticker);
+        verify(storageService).getOrCreate(expectedStorageRequest);
+        verify(marketDataStreamManager).subscribeTradeAsync(
+                eq(new Instrument(uid)),
+                eq(TradeSourceType.TRADE_SOURCE_ALL),
+                eq(false),
+                any(),
+                any()
+        );
+    }
+
+    @Test
+    @DisplayName("23. subscribe: если resolve бросает SymbolNotFoundException, подписка прерывается и стрим не создается")
+    void subscribe_whenSymbolNotFound_abortsAndDoesNotCreateStream() {
+        String ticker = "SBER";
+        var request = new CreateSubscriptionRequest(EXCHANGE, ticker, CHANNEL);
+
+        when(tinvestService.resolve(ticker)).thenThrow(new SymbolNotFoundException("Инструмент не найден: " + ticker));
+
+        assertThatThrownBy(() -> subscriptionService.subscribe(request))
+                .isInstanceOf(SymbolNotFoundException.class)
+                .hasMessageContaining("SBER");
+
+        verify(tinvestService).resolve(ticker);
+        verifyNoInteractions(marketDataStreamManager);
+        verify(storageService, never()).getOrCreate(any());
     }
 }

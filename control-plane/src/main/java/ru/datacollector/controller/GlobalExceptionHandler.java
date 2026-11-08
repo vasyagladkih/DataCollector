@@ -6,6 +6,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import ru.datacollector.dto.ErrorResponse;
+import ru.datacollector.exception.ExchangeUnavailableException;
 import ru.datacollector.exception.IllegalSubscriptionStateException;
 import ru.datacollector.exception.SubscriptionNotFoundException;
 import ru.datacollector.exception.SymbolNotFoundException;
@@ -31,6 +32,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalState(IllegalSubscriptionStateException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(new ErrorResponse(Instant.now(), HttpStatus.BAD_REQUEST.value(), "ILLEGAL_SUBSCRIPTION_STATE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(ExchangeUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleExchangeUnavailable(ExchangeUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse(Instant.now(), HttpStatus.SERVICE_UNAVAILABLE.value(), "EXCHANGE_UNAVAILABLE", ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse(Instant.now(), HttpStatus.BAD_REQUEST.value(), "ILLEGAL_ARGUMENT", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
