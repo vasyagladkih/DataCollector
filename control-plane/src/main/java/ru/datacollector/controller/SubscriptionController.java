@@ -16,6 +16,7 @@ import ru.datacollector.dto.CreateSubscriptionRequest;
 import ru.datacollector.dto.SubscriptionResponse;
 import ru.datacollector.model.Status;
 import ru.datacollector.service.SubscriptionService;
+import ru.datacollector.service.TinvestService;
 
 import java.util.List;
 
@@ -25,6 +26,7 @@ import java.util.List;
 public class SubscriptionController {
 
     private final SubscriptionService subscriptionService;
+    private final TinvestService tinvestService;
 
     @PostMapping
     public ResponseEntity<SubscriptionResponse> subscribe(
@@ -62,5 +64,11 @@ public class SubscriptionController {
     @PostMapping("/{id}/restart")
     public ResponseEntity<SubscriptionResponse> restart(@PathVariable Long id) {
         return ResponseEntity.ok(subscriptionService.restart(id));
+    }
+
+    @PostMapping("/sync")
+    public ResponseEntity<Void> sync() {
+        tinvestService.syncAllInstruments();
+        return ResponseEntity.noContent().build();
     }
 }

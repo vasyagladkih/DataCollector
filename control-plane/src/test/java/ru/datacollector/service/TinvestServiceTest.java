@@ -8,9 +8,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import ru.datacollector.exception.ExchangeUnavailableException;
 import ru.datacollector.exception.SymbolNotFoundException;
+import ru.datacollector.mapper.InstrumentEntityMapper;
 import ru.datacollector.repository.InstrumentRepository;
 import ru.datacollector.repository.entity.InstrumentEntity;
 import ru.tinkoff.piapi.contract.v1.Bond;
@@ -49,6 +51,10 @@ class TinvestServiceTest {
 
     @Mock
     private InstrumentRepository repository;
+
+    @Spy
+    @SuppressWarnings("unused")
+    private InstrumentEntityMapper instrumentEntityMapper = new InstrumentEntityMapper();
 
     @InjectMocks
     private TinvestService tinvestService;

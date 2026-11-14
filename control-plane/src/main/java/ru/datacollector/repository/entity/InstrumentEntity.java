@@ -27,4 +27,9 @@ public record InstrumentEntity(
         boolean isTradable,
         @Column("updated_at")
         Instant updatedAt
-) {}
+) {
+        public InstrumentEntity {
+                lot = lot > 0 ? lot : 1;
+                updatedAt = updatedAt != null ? updatedAt : Instant.now();
+        }
+}

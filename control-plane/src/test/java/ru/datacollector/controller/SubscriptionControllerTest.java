@@ -15,6 +15,7 @@ import ru.datacollector.exception.SubscriptionNotFoundException;
 import ru.datacollector.exception.SymbolNotFoundException;
 import ru.datacollector.model.Status;
 import ru.datacollector.service.SubscriptionService;
+import ru.datacollector.service.TinvestService;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -55,6 +56,8 @@ class SubscriptionControllerTest {
 
     @MockitoBean
     private SubscriptionService subscriptionService;
+    @MockitoBean
+    private TinvestService tinvestService;
 
     private String readJson(String path) {
         try (InputStream is = getClass().getResourceAsStream(path)) {

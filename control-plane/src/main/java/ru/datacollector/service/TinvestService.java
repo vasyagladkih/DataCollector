@@ -9,6 +9,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import ru.datacollector.exception.ExchangeUnavailableException;
 import ru.datacollector.exception.SymbolNotFoundException;
+import ru.datacollector.mapper.InstrumentEntityMapper;
 import ru.datacollector.repository.InstrumentRepository;
 import ru.datacollector.repository.entity.InstrumentEntity;
 import ru.tinkoff.piapi.contract.v1.FindInstrumentRequest;
@@ -36,6 +37,7 @@ public class TinvestService {
 
     private final InstrumentsServiceGrpc.InstrumentsServiceBlockingStub instrumentsServiceBlockingStub;
     private final InstrumentRepository repository;
+    private final InstrumentEntityMapper instrumentEntityMapper;
 
     @EventListener(ApplicationReadyEvent.class)
     public void onStartup() {
@@ -53,27 +55,27 @@ public class TinvestService {
 
         fetchCategory("акций",
                 () -> instrumentsServiceBlockingStub.shares(BASE_REQUEST).getInstrumentsList(),
-                s -> toEntity(s.getUid(), s.getTicker(), s.getClassCode(), "share", s.getName(), s.getLot(), s.getCurrency(), s.getApiTradeAvailableFlag(), now),
+                s -> instrumentEntityMapper.toEntity(s, now),
                 allInstruments);
 
         fetchCategory("фьючерсов",
                 () -> instrumentsServiceBlockingStub.futures(BASE_REQUEST).getInstrumentsList(),
-                f -> toEntity(f.getUid(), f.getTicker(), f.getClassCode(), "futures", f.getName(), f.getLot(), f.getCurrency(), f.getApiTradeAvailableFlag(), now),
+                f -> instrumentEntityMapper.toEntity(f, now),
                 allInstruments);
 
         fetchCategory("облигаций",
                 () -> instrumentsServiceBlockingStub.bonds(BASE_REQUEST).getInstrumentsList(),
-                b -> toEntity(b.getUid(), b.getTicker(), b.getClassCode(), "bond", b.getName(), b.getLot(), b.getCurrency(), b.getApiTradeAvailableFlag(), now),
+                b -> instrumentEntityMapper.toEntity(b, now),
                 allInstruments);
 
         fetchCategory("валют",
                 () -> instrumentsServiceBlockingStub.currencies(BASE_REQUEST).getInstrumentsList(),
-                c -> toEntity(c.getUid(), c.getTicker(), c.getClassCode(), "currency", c.getName(), c.getLot(), c.getCurrency(), c.getApiTradeAvailableFlag(), now),
+                c -> instrumentEntityMapper.toEntity(c, now),
                 allInstruments);
 
         fetchCategory("ETF",
                 () -> instrumentsServiceBlockingStub.etfs(BASE_REQUEST).getInstrumentsList(),
-                e -> toEntity(e.getUid(), e.getTicker(), e.getClassCode(), "etf", e.getName(), e.getLot(), e.getCurrency(), e.getApiTradeAvailableFlag(), now),
+                e -> instrumentEntityMapper.toEntity(e, now),
                 allInstruments);
 
         if (!allInstruments.isEmpty()) {
@@ -85,7 +87,9 @@ public class TinvestService {
     }
 
     public InstrumentEntity resolve(String symbol) {
-        if (symbol == null || symbol.isBlank()) throw new IllegalArgumentException("Символ инструмента не может быть пустым");
+        if (symbol == null || symbol.isBlank()) {
+            throw new IllegalArgumentException("Символ инструмента не может быть пустым");
+        }
         String cleanSymbol = symbol.trim();
 
         Optional<InstrumentEntity> fromDb = repository.findByTicker(cleanSymbol)
@@ -113,17 +117,7 @@ public class TinvestService {
                 .findFirst()
                 .orElseThrow(() -> new SymbolNotFoundException("Инструмент не найден: " + cleanSymbol));
 
-        InstrumentEntity entity = toEntity(
-                matched.getUid(),
-                matched.getTicker(),
-                matched.getClassCode(),
-                matched.getInstrumentType(),
-                matched.getName(),
-                matched.getLot(),
-                "rub",
-                matched.getApiTradeAvailableFlag(),
-                Instant.now()
-        );
+        InstrumentEntity entity = instrumentEntityMapper.toEntity(matched, Instant.now());
 
         repository.upsert(entity);
 
@@ -140,49 +134,30 @@ public class TinvestService {
             Function<T, InstrumentEntity> mapper,
             List<InstrumentEntity> target
     ) {
+        int sizeBefore = target.size();
         try {
             List<T> items = fetcher.get();
+            if (items == null || items.isEmpty()) {
+                log.warn("Категория [{}] вернула ПУСТОЙ список от T-Invest API (0 инструментов)", categoryName);
+                return;
+            }
+
+            int skipped = 0;
             for (T item : items) {
                 InstrumentEntity entity = mapper.apply(item);
                 if (entity != null && !entity.instrumentUid().isBlank()) {
                     target.add(entity);
-                }
+                } else {skipped++;}
             }
-            log.info("Успешно получено {}: {}", categoryName, items.size());
+            int added = target.size() - sizeBefore;
+            log.info("Категория [{}]: получено из API = {}, добавлено в реестр = {}, пропущено = {}",
+                    categoryName, items.size(), added, skipped);
+
+        } catch (StatusRuntimeException e) {
+            log.error("gRPC сбой категории [{}]: Code = {}, Description = {}, Trailers = {}",
+                    categoryName, e.getStatus().getCode(), e.getStatus().getDescription(), e.getTrailers());
         } catch (Exception e) {
-            log.error("Ошибка при синхронизации {}: {}", categoryName, e.getMessage(), e);
+            log.error("Непредвиденная ошибка категории [{}]: {}", categoryName, e.getMessage(), e);
         }
-    }
-
-    // TODO вынести в маппер
-    private InstrumentEntity toEntity(
-            String uid,
-            String ticker,
-            String classCode,
-            String type,
-            String name,
-            int lot,
-            String currency,
-            boolean isTradable,
-            Instant now
-    ) {
-        return new InstrumentEntity(
-                uid,
-                sanitize(ticker, 32, "UNKNOWN"),
-                sanitize(classCode, 16, "UNKNOWN"),
-                sanitize(type, 16, "unknown"),
-                sanitize(name, 255, "UNKNOWN"),
-                lot > 0 ? lot : 1,
-                sanitize(currency, 10, "rub"),
-                isTradable,
-                now
-        );
-    }
-
-    private static String sanitize(String val, int maxLen, String defaultVal) {
-        if (val == null || val.isBlank()) {
-            return defaultVal;
-        }
-        return val.length() > maxLen ? val.substring(0, maxLen) : val;
     }
 }
